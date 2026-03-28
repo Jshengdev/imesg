@@ -1,18 +1,27 @@
-# iMesg
+# Nudge
 
-Your AI-powered iMessage assistant
+AI assistant that lives in iMessage. Text it anything — it responds with voice notes powered by MiniMax M2.7 + Speech 2.8 TTS.
 
-## Getting Started
+Connects to your Gmail and Google Calendar via Composio to give you context-aware responses about your schedule, emails, and tasks.
 
-To get the frontend running locally:
+## Setup
 
-1.  Install dependencies:
-    ```bash
-    cd frontend
-    npm install
-    ```
+```bash
+cp .env.example .env   # fill in API keys
+bun install
+npx tsx src/index.ts
+```
 
-2.  Run the development server:
-    ```bash
-    npm run dev
-    ```
+Requires macOS with Full Disk Access for iMessage.
+
+## Stack
+
+- **LLM**: MiniMax M2.7 (reasoning + JSON extraction)
+- **Voice**: MiniMax Speech 2.8 TTS
+- **Vision**: MiniMax M2.7 multimodal
+- **Calendar/Email**: Composio (Google Calendar + Gmail, per-user OAuth)
+- **iMessage**: Photon iMessage Kit
+- **Database**: SQLite (better-sqlite3)
+- **Frontend**: Next.js + Tailwind
+
+Built with TRAE AI for the Build with TRAE x MiniMax Hackathon at USC.

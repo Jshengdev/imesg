@@ -24,6 +24,57 @@ export function getEntity(userId = "default") {
   return composio!.getEntity(userId);
 }
 
+// --- Per-user OAuth onboarding ---
+
+// Normalize phone to a safe entity ID: +12134240682 → user-12134240682
+function phoneToEntityId(phone: string): string {
+  return "user-" + phone.replace(/[^0-9]/g, "");
+}
+
+export async function getUserEntity(phone: string) {
+  if (isMockMode()) throw new Error("Composio in mock mode");
+  return composio!.getEntity(phoneToEntityId(phone));
+}
+
+export async function checkUserConnected(phone: string): Promise<{ gmail: boolean; calendar: boolean }> {
+  if (isMockMode()) return { gmail: false, calendar: false };
+  try {
+    const entity = composio!.getEntity(phoneToEntityId(phone));
+    const connections = await entity.getConnections();
+    const apps = (connections || []).map((c: any) => (c.appName || c.app || "").toLowerCase());
+    return {
+      gmail: apps.some((a: string) => a.includes("gmail")),
+      calendar: apps.some((a: string) => a.includes("calendar") || a.includes("googlecalendar")),
+    };
+  } catch {
+    return { gmail: false, calendar: false };
+  }
+}
+
+export async function getOAuthLinks(phone: string): Promise<{ gmail?: string; calendar?: string }> {
+  if (isMockMode()) return {};
+  const entity = composio!.getEntity(phoneToEntityId(phone));
+  const links: { gmail?: string; calendar?: string } = {};
+
+  try {
+    const gmailResult = await entity.initiateConnection({ appName: "gmail" });
+    if (gmailResult.redirectUrl) links.gmail = gmailResult.redirectUrl;
+  } catch (e) {
+    console.warn("[composio] gmail oauth init failed:", (e as Error).message);
+  }
+
+  try {
+    const calResult = await entity.initiateConnection({ appName: "googlecalendar" });
+    if (calResult.redirectUrl) links.calendar = calResult.redirectUrl;
+  } catch (e) {
+    console.warn("[composio] calendar oauth init failed:", (e as Error).message);
+  }
+
+  return links;
+}
+
+// --- Execute with per-user entity ---
+
 export function findArrayInResponse(data: unknown, keys: string[], depth = 0): any[] {
   if (depth > 5) return [];
   if (Array.isArray(data) && data.length > 0) return data;
@@ -44,9 +95,10 @@ export async function executeWithFallback(
   strategies: { actionName: string; params: Record<string, unknown> }[],
   searchKeys: string[],
   label: string,
+  phone?: string,
 ): Promise<any[]> {
   if (isMockMode()) return [];
-  const entity = getEntity();
+  const entity = phone ? composio!.getEntity(phoneToEntityId(phone)) : getEntity();
   for (const s of strategies) {
     try {
       const result = await entity.execute(s);

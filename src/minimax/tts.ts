@@ -7,7 +7,7 @@ const AUDIO_DIR = join(process.cwd(), "audio");
 const ENDPOINTS = ["/v1/t2a_v2", "/v1/text_to_speech", "/v1/tts"];
 const MODEL = "speech-2.8-turbo";
 
-export async function textToSpeech(text: string, emotion = "neutral"): Promise<string> {
+export async function textToSpeech(text: string, emotion = "neutral"): Promise<string | null> {
   mkdirSync(AUDIO_DIR, { recursive: true });
 
   for (const endpoint of ENDPOINTS) {
@@ -22,6 +22,7 @@ export async function textToSpeech(text: string, emotion = "neutral"): Promise<s
           model: MODEL,
           text,
           voice_setting: { voice_id: "male-qn-qingse", emotion },
+          audio_setting: { format: "mp3" },
         }),
       });
 
@@ -34,20 +35,15 @@ export async function textToSpeech(text: string, emotion = "neutral"): Promise<s
       const audioHex: string = json.data?.audio;
       if (!audioHex) { console.warn(`tts ${endpoint}: no audio data`); continue; }
 
-      const filePath = join(AUDIO_DIR, `${randomUUID()}.m4a`);
+      const filePath = join(AUDIO_DIR, `nudge-voice-${randomUUID().slice(0, 8)}.mp3`);
       writeFileSync(filePath, Buffer.from(audioHex, "hex"));
+      console.log(`[tts] generated ${filePath} (${Buffer.from(audioHex, "hex").length} bytes)`);
       return filePath;
     } catch (err) {
       console.warn(`tts ${endpoint} failed:`, err);
     }
   }
 
-  console.error("all tts endpoints failed — returning placeholder");
-  const p = join(AUDIO_DIR, `${randomUUID()}.m4a`);
-  const SILENT_MP3 = Buffer.from(
-    "fff3e004000000000000000000000000000000000000000000000000000000000000000000",
-    "hex"
-  );
-  writeFileSync(p, SILENT_MP3);
-  return p;
+  console.error("[tts] all endpoints failed — skipping audio");
+  return null;
 }
