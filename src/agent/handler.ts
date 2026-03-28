@@ -351,6 +351,12 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
       try {
         const analysis = await analyzeImage(imageAtt.path);
         userContent = `[user sent a photo: ${analysis}]${msg.text ? `\n\n${msg.text}` : ""}`;
+
+        // Also extract tasks from the photo content (rubric → tasks, screenshot → action items)
+        storeMessage({ chat_id: replyTo, sender: "photo", content: analysis, direction: "in", user_id: userId });
+        runExtractionOnce(userId).then(count => {
+          if (count) console.log(`[handler] photo → ${count} task(s) extracted`);
+        }).catch(() => {});
       } catch (e) {
         userContent = `[photo — couldn't read it]${msg.text ? `\n\n${msg.text}` : ""}`;
       }
