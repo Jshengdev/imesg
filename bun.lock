@@ -5,6 +5,7 @@
     "": {
       "name": "imesg",
       "dependencies": {
+        "@composio/core": "^0.6.7",
         "@photon-ai/imessage-kit": "^2.1.2",
         "better-sqlite3": "^12.8.0",
         "composio-core": "^0.5.39",
@@ -34,6 +35,12 @@
     "@cfworker/json-schema": ["@cfworker/json-schema@4.1.1", "", {}, "sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og=="],
 
     "@cloudflare/workers-types": ["@cloudflare/workers-types@4.20260317.1", "", {}, "sha512-+G4eVwyCpm8Au1ex8vQBCuA9wnwqetz4tPNRoB/53qvktERWBRMQnrtvC1k584yRE3emMThtuY0gWshvSJ++PQ=="],
+
+    "@composio/client": ["@composio/client@0.1.0-alpha.62", "", {}, "sha512-MUBawDp6Uw85m3T0ZtPUSTe9v4SPa0K/Ey3ADZQ/k1NkWsin0oGWhrB/i9hMzndRobijHmBw6xgnFCwjU1B9MQ=="],
+
+    "@composio/core": ["@composio/core@0.6.7", "", { "dependencies": { "@composio/client": "0.1.0-alpha.62", "@composio/json-schema-to-zod": "0.1.20", "@types/json-schema": "^7.0.15", "chalk": "^4.1.2", "openai": "^6.16.0", "pusher-js": "^8.4.0", "semver": "^7.7.2", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "zod": "^3.25 || ^4" } }, "sha512-nWveoUAoCSVTVwOEBaBiRAHu2fVy1nMH7kTICgSaFTaYJYYvpiD8tjCClYRBnp1W4QN3HoRDH4dBWCBdCe9D6A=="],
+
+    "@composio/json-schema-to-zod": ["@composio/json-schema-to-zod@0.1.20", "", { "peerDependencies": { "zod": ">=3.25.76 <5" } }, "sha512-d4V34itLrUWG/VBh7ciznKcxF/T22MBLHmuEzHoX0zsBOHsUmjYz5qtDh20S2p3FE+HHvLZxpXiv8yfdd4yI+Q=="],
 
     "@composio/mcp": ["@composio/mcp@1.0.3-0", "", { "bin": { "mcp": "index" } }, "sha512-IpbfST0SSs/CEv+PIf6+EL0feNuJhQyUrOHJLPge8NhyLLrCyVqvujRIPyRUUjy0NDsked/Mm5VpJmYM6OACbg=="],
 
@@ -289,7 +296,7 @@
 
     "pump": ["pump@3.0.4", "", { "dependencies": { "end-of-stream": "^1.1.0", "once": "^1.3.1" } }, "sha512-VS7sjc6KR7e1ukRFhQSY5LM2uBWAUPiOPa/A3mkKmiMwSmRFUITt0xuj+/lesgnCv+dPIEYlkzrcyXgquIHMcA=="],
 
-    "pusher-js": ["pusher-js@8.4.0-rc2", "", { "dependencies": { "tweetnacl": "^1.0.3" } }, "sha512-d87GjOEEl9QgO5BWmViSqW0LOzPvybvX6WA9zLUstNdB57jVJuR27zHkRnrav2a3+zAMlHbP2Og8wug+rG8T+g=="],
+    "pusher-js": ["pusher-js@8.4.3", "", { "dependencies": { "tweetnacl": "^1.0.3" } }, "sha512-MYnVYhKxq2Oeg3HmTQxnKDj1oAZjqJCkEcYj8hYbH1Rw5pT0g8KtgOYVUKDRnyrPtwRvA9QR4wunwJW5xIbq0Q=="],
 
     "rc": ["rc@1.2.8", "", { "dependencies": { "deep-extend": "^0.6.0", "ini": "~1.3.0", "minimist": "^1.2.0", "strip-json-comments": "~2.0.1" }, "bin": { "rc": "./cli.js" } }, "sha512-y3bGgqKj3QBdxLbLkomlohkvsA8gdAiUQlSBJnBhfn+BPxg4bc62d8TcBW15wavDfgexCgccckhcZvywyQYPOw=="],
 
@@ -370,6 +377,8 @@
     "@langchain/langgraph-checkpoint/uuid": ["uuid@10.0.0", "", { "bin": { "uuid": "dist/bin/uuid" } }, "sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ=="],
 
     "@langchain/langgraph-sdk/p-queue": ["p-queue@9.1.0", "", { "dependencies": { "eventemitter3": "^5.0.1", "p-timeout": "^7.0.0" } }, "sha512-O/ZPaXuQV29uSLbxWBGGZO1mCQXV2BLIwUr59JUU9SoH76mnYvtms7aafH/isNSNGwuEfP6W/4xD0/TJXxrizw=="],
+
+    "composio-core/pusher-js": ["pusher-js@8.4.0-rc2", "", { "dependencies": { "tweetnacl": "^1.0.3" } }, "sha512-d87GjOEEl9QgO5BWmViSqW0LOzPvybvX6WA9zLUstNdB57jVJuR27zHkRnrav2a3+zAMlHbP2Og8wug+rG8T+g=="],
 
     "composio-core/uuid": ["uuid@10.0.0", "", { "bin": { "uuid": "dist/bin/uuid" } }, "sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ=="],
 

@@ -13,125 +13,39 @@ export interface FreeBlock {
   durationMin: number;
 }
 
-const CALENDAR_SEARCH_KEYS = ["items", "events", "event_data", "results", "data"];
-
-function getTodayDateRange(): { timeMin: string; timeMax: string } {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfTomorrow = new Date(startOfToday);
-  startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
-
-  return {
-    timeMin: startOfToday.toISOString(),
-    timeMax: startOfTomorrow.toISOString()
-  };
-}
-
-export function normalize(e: any): CalendarEvent {
-  const title = e.summary || e.title || "(no title)";
-
-  let start: Date;
-  let end: Date;
-
-  if (e.start?.dateTime) {
-    start = new Date(e.start.dateTime);
-  } else if (e.start?.date) {
-    start = new Date(e.start.date);
-  } else {
-    start = new Date();
-  }
-
-  if (e.end?.dateTime) {
-    end = new Date(e.end.dateTime);
-  } else if (e.end?.date) {
-    end = new Date(e.end.date);
-  } else {
-    end = new Date(start.getTime() + 60 * 60 * 1000);
-  }
-
-  const attendees: string[] = [];
-  if (e.attendees && Array.isArray(e.attendees)) {
-    for (const a of e.attendees) {
-      const emailOrName = a.email || a.displayName;
-      if (emailOrName) {
-        attendees.push(emailOrName);
-      }
-    }
-  }
-
-  return {
-    title,
-    start,
-    end,
-    attendees
-  };
-}
+const SEARCH_KEYS = ["items", "events", "event_data", "results", "data"];
 
 export async function pullTodayEvents(): Promise<CalendarEvent[]> {
-  const { timeMin, timeMax } = getTodayDateRange();
+  const now = new Date();
+  const timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  const timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+  const raw = await executeWithFallback([
+    { actionName: "GOOGLECALENDAR_FIND_EVENT", params: { calendarId: "primary", timeMin, timeMax } },
+    { actionName: "GOOGLECALENDAR_EVENTS_LIST", params: { calendarId: "primary", timeMin, timeMax, maxResults: 250 } },
+    { actionName: "GOOGLECALENDAR_FIND_EVENT", params: { timeMin, timeMax } },
+  ], SEARCH_KEYS, "calendar");
+  return raw.map(normalize);
+}
 
-  const strategies = [
-    {
-      actionName: "GOOGLECALENDAR_FIND_EVENT",
-      params: {
-        calendarId: "primary",
-        timeMin,
-        timeMax
-      }
-    },
-    {
-      actionName: "GOOGLECALENDAR_LIST_EVENTS",
-      params: {
-        calendarId: "primary",
-        timeMin,
-        timeMax,
-        maxResults: 250
-      }
-    },
-    {
-      actionName: "GOOGLECALENDAR_FIND_EVENT",
-      params: {
-        timeMin,
-        timeMax
-      }
-    }
-  ];
-
-  const rawEvents = await executeWithFallback(
-    strategies,
-    CALENDAR_SEARCH_KEYS,
-    "pullTodayEvents"
-  );
-
-  return rawEvents.map(normalize);
+function normalize(e: any): CalendarEvent {
+  const startStr = e.start?.dateTime || e.start?.date || e.start;
+  const endStr = e.end?.dateTime || e.end?.date || e.end;
+  return {
+    title: e.summary || e.title || "(no title)",
+    start: new Date(startStr),
+    end: new Date(endStr),
+    attendees: (e.attendees || []).map((a: any) => a.email || a.displayName || "").filter(Boolean),
+  };
 }
 
 export function findFreeBlocks(events: CalendarEvent[]): FreeBlock[] {
-  if (events.length === 0) {
-    return [];
-  }
-
   const sorted = [...events].sort((a, b) => a.start.getTime() - b.start.getTime());
-
-  const freeBlocks: FreeBlock[] = [];
-
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const currentEnd = sorted[i].end;
-    const nextStart = sorted[i + 1].start;
-
-    if (nextStart > currentEnd) {
-      const durationMs = nextStart.getTime() - currentEnd.getTime();
-      const durationMin = Math.floor(durationMs / (1000 * 60));
-
-      if (durationMin >= 30) {
-        freeBlocks.push({
-          start: currentEnd,
-          end: nextStart,
-          durationMin
-        });
-      }
-    }
+  const blocks: FreeBlock[] = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1]!;
+    const curr = sorted[i]!;
+    const durationMin = (curr.start.getTime() - prev.end.getTime()) / 60000;
+    if (durationMin >= 30) blocks.push({ start: prev.end, end: curr.start, durationMin });
   }
-
-  return freeBlocks;
+  return blocks;
 }

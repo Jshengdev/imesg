@@ -1,260 +1,113 @@
-import { getTaskQueue, getRecentConversation, getPersonDossier } from '../memory/db.js';
-import { pullTodayEvents, findFreeBlocks, CalendarEvent, FreeBlock } from '../integrations/calendar.js';
-import { pullUnreadEmails, EmailSummary } from '../integrations/gmail.js';
+import { getTaskQueue, getRecentConversation, getPersonDossier } from "../memory/db";
+import { pullTodayEvents, findFreeBlocks, type CalendarEvent, type FreeBlock } from "../integrations/calendar";
+import { pullUnreadEmails, type EmailSummary } from "../integrations/gmail";
 
 function fmtTime(d: Date): string {
-  const hours = d.getHours();
-  const minutes = d.getMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  const hour12 = hours % 12 || 12;
-  const minStr = minutes.toString().padStart(2, '0');
-  return `${hour12}:${minStr} ${ampm}`;
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 function fmtEvents(events: CalendarEvent[]): string {
-  if (!events || events.length === 0) {
-    return '## your schedule today\nNo events scheduled';
-  }
-
-  const lines = ['## your schedule today'];
-  for (const event of events) {
-    const time = fmtTime(event.start);
-    const attendees = event.attendees.length > 0 ? ` (${event.attendees.join(', ')})` : '';
-    lines.push(`- ${time}: ${event.title}${attendees}`);
-  }
-  return lines.join('\n');
+  if (!events.length) return "";
+  const lines = events.map(e => `- ${fmtTime(e.start)}: ${e.title}${e.attendees.length ? ` (${e.attendees.slice(0, 3).join(", ")})` : ""}`);
+  return `## your schedule today\n${lines.join("\n")}`;
 }
 
 function fmtFreeBlocks(blocks: FreeBlock[]): string {
-  if (!blocks || blocks.length === 0) {
-    return '## free blocks\nNo free blocks found';
-  }
-
-  const lines = ['## free blocks'];
-  for (const block of blocks) {
-    const startTime = fmtTime(block.start);
-    const endTime = fmtTime(block.end);
-    const durationMin = block.durationMin;
-    lines.push(`- ${startTime}-${endTime} (${durationMin} min)`);
-  }
-  return lines.join('\n');
+  if (!blocks.length) return "";
+  const lines = blocks.map(b => `- ${fmtTime(b.start)}-${fmtTime(b.end)} (${b.durationMin} min)`);
+  return `## free blocks\n${lines.join("\n")}`;
 }
 
 function fmtTasks(tasks: any[]): string {
-  const topTasks = tasks ? tasks.slice(0, 10) : [];
-  
-  if (topTasks.length === 0) {
-    return '## task queue\nNo pending tasks';
-  }
-
-  const lines = ['## task queue'];
-  topTasks.forEach((task, index) => {
-    let line = `${index + 1}. ${task.description}`;
-    
-    if (task.urgency !== undefined) {
-      const urgencyLabel = getDayName(task.deadline);
-      line += ` [urgency: ${task.urgency}]`;
-    }
-    
-    if (task.deadline) {
-      const dueLabel = getDayName(task.deadline);
-      line += ` [due: ${dueLabel}]`;
-    }
-    
-    lines.push(line);
-  });
-  return lines.join('\n');
-}
-
-function getDayName(dateStr: string): string {
-  if (!dateStr) return 'unknown';
-  
-  const date = new Date(dateStr);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  
-  const dayDiff = Math.floor((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-  
-  if (dayDiff === 0) return 'today';
-  if (dayDiff === 1) return 'tomorrow';
-  
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return days[date.getDay()];
+  if (!tasks.length) return "";
+  const lines = tasks.slice(0, 10).map((t, i) =>
+    `${i + 1}. ${t.description}${t.urgency > 3 ? ` [urgency: ${t.urgency}]` : ""}${t.deadline ? ` [due: ${t.deadline}]` : ""}`
+  );
+  return `## task queue\n${lines.join("\n")}`;
 }
 
 function fmtEmails(emails: EmailSummary[]): string {
-  const topEmails = emails ? emails.slice(0, 5) : [];
-  
-  if (topEmails.length === 0) {
-    return '## unread emails\nNo unread emails';
-  }
-
-  const lines = ['## unread emails'];
-  for (const email of topEmails) {
-    const snippet = email.snippet.length > 50 ? email.snippet.slice(0, 50) + '...' : email.snippet;
-    lines.push(`- from ${email.from}: ${email.subject} — ${snippet}`);
-  }
-  return lines.join('\n');
+  if (!emails.length) return "";
+  const lines = emails.slice(0, 5).map(e => `- from ${e.from}: ${e.subject}${e.snippet ? ` — ${e.snippet}` : ""}`);
+  return `## unread emails\n${lines.join("\n")}`;
 }
 
-function fmtConversation(entries: any[]): string {
-  if (!entries || entries.length === 0) {
-    return '## recent conversation\nNo recent conversation';
-  }
-
-  const reversed = [...entries].reverse();
-  const lines = ['## recent conversation'];
-  
-  for (const entry of reversed) {
-    const role = entry.direction === 'in' ? 'user' : 'nudge';
-    lines.push(`${role}: ${entry.content}`);
-  }
-  
-  return lines.join('\n');
+function fmtConversation(entries: { direction: string; content: string; timestamp: string }[]): string {
+  if (!entries.length) return "";
+  const lines = entries.reverse().map(e => {
+    const who = e.direction === "in" ? "user" : "nudge";
+    return `${who}: ${e.content.slice(0, 100)}`;
+  });
+  return `## recent conversation\n${lines.join("\n")}`;
 }
 
-function getSectionOrder(intent?: string): string[] {
-  switch (intent) {
-    case 'task':
-      return ['conversation', 'tasks', 'blocks', 'events', 'emails'];
-    case 'email':
-      return ['conversation', 'emails', 'tasks', 'events', 'blocks'];
-    case 'schedule':
-      return ['conversation', 'events', 'blocks', 'tasks', 'emails'];
-    case 'draft':
-      return ['conversation', 'emails', 'tasks', 'events', 'blocks'];
-    case 'person':
-      return ['conversation', 'tasks', 'emails', 'events', 'blocks'];
-    default:
-      return ['conversation', 'events', 'blocks', 'tasks', 'emails'];
-  }
+const SECTION_ORDER: Record<string, string[]> = {
+  task: ["conversation", "tasks", "blocks", "events", "emails"],
+  email: ["conversation", "emails", "tasks", "events", "blocks"],
+  schedule: ["conversation", "events", "blocks", "tasks", "emails"],
+  draft: ["conversation", "emails", "tasks", "events", "blocks"],
+  person: ["conversation", "tasks", "emails", "events", "blocks"],
+};
+
+const PERSON_RE = /\b(?:what did|about|from|tell me about|anything from|update on)\s+([a-z][a-z]+(?:\s+[a-z]+)?)(?:\s+(?:ask|say|send|want|need|think|do|mention))?/i;
+const STOP_VERBS = new Set(["ask", "say", "send", "want", "need", "think", "do", "mention", "reply", "email", "text"]);
+const DRAFT_RE = /\b(?:reply|write|draft|respond|email|text)\b.*?\bto\s+(\w+(?:\s+\w+)?)/i;
+const DRAFT_STOPS = new Set([...STOP_VERBS, "about", "regarding", "the", "for", "with", "from", "that", "this"]);
+
+export function extractDraftRecipient(text: string): string | null {
+  const m = DRAFT_RE.exec(text);
+  if (!m?.[1]) return null;
+  const words = m[1].split(/\s+/).filter(w => w.length > 2 && !DRAFT_STOPS.has(w.toLowerCase()));
+  return words.length ? words.join(" ") : null;
 }
 
 export function extractPersonName(text: string): string | null {
-  const patterns = [
-    /(?:what did|who said|tell me about|anything from|heard from)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
-    /(?:from|to|with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
-    /(?:Sarah|John|Mike|Tom|Lisa|Amy|Jim|Bob|Alice)/i
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      return match[1];
-    }
-  }
-
-  return null;
+  const m = PERSON_RE.exec(text);
+  if (!m?.[1]) return null;
+  const words = m[1].trim().split(/\s+/).filter(w => !STOP_VERBS.has(w.toLowerCase()));
+  return words.length ? words.join(" ") : null;
 }
 
-export function extractDraftRecipient(text: string): string | null {
-  const patterns = [
-    /(?:reply to|reply)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s+(?:about|regarding)/i,
-    /(?:draft email|email)\s+to\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
-    /(?:email|reply)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      return match[1];
-    }
-  }
-
-  return null;
+function fmtPersonDossier(name: string): string {
+  const { person, messages, tasks } = getPersonDossier(name);
+  if (!person && !messages.length && !tasks.length) return "";
+  const lines: string[] = [`## about ${name}`];
+  if (person?.context_notes) lines.push(`context: ${person.context_notes}`);
+  if (person?.last_contact) lines.push(`last contact: ${person.last_contact}`);
+  for (const m of messages.slice(0, 5)) lines.push(`- [${m.sender}] ${(m.content ?? "").slice(0, 80)}`);
+  for (const t of tasks) lines.push(`- task: ${t.description}${t.deadline ? ` [due: ${t.deadline}]` : ""} (${t.status})`);
+  return lines.join("\n");
 }
+
+const DEFAULT_ORDER = ["conversation", "events", "blocks", "tasks", "emails"];
 
 export async function assembleContext(intent?: string, userText?: string): Promise<string> {
-  const results = await Promise.allSettled([
+  const [eventsResult, tasksResult, emailsResult] = await Promise.allSettled([
     pullTodayEvents(),
-    getTaskQueue(),
-    pullUnreadEmails(20),
-    getRecentConversation(8)
+    Promise.resolve(getTaskQueue()),
+    pullUnreadEmails(5),
   ]);
 
-  let events: CalendarEvent[] = [];
-  let tasks: any[] = [];
-  let emails: EmailSummary[] = [];
-  let conversation: any[] = [];
-
-  if (results[0].status === 'fulfilled') {
-    events = results[0].value;
-  }
-
-  if (results[1].status === 'fulfilled') {
-    tasks = results[1].value;
-  }
-
-  if (results[2].status === 'fulfilled') {
-    emails = results[2].value;
-  }
-
-  if (results[3].status === 'fulfilled') {
-    conversation = results[3].value;
-  }
-
+  const events = eventsResult.status === "fulfilled" ? eventsResult.value : [];
+  const tasks = tasksResult.status === "fulfilled" ? tasksResult.value : [];
+  const emails = emailsResult.status === "fulfilled" ? emailsResult.value : [];
   const freeBlocks = findFreeBlocks(events);
-  const sectionOrder = getSectionOrder(intent);
-  const sections: { [key: string]: string } = {
-    conversation: fmtConversation(conversation),
-    events: fmtEvents(events),
-    blocks: fmtFreeBlocks(freeBlocks),
-    tasks: fmtTasks(tasks),
-    emails: fmtEmails(emails)
+  const conversation = getRecentConversation(8);
+
+  const all: Record<string, string> = {
+    conversation: fmtConversation(conversation), events: fmtEvents(events),
+    blocks: fmtFreeBlocks(freeBlocks), tasks: fmtTasks(tasks), emails: fmtEmails(emails),
   };
+  const order = (intent && SECTION_ORDER[intent]) || DEFAULT_ORDER;
+  const sections = order.map(k => all[k]).filter(Boolean);
 
-  if ((intent === 'person' || intent === 'draft') && userText) {
-    const name = intent === 'person' ? extractPersonName(userText) : extractDraftRecipient(userText);
+  if ((intent === "person" || intent === "draft") && userText) {
+    const name = intent === "draft" ? extractDraftRecipient(userText) : extractPersonName(userText);
     if (name) {
-      const dossier = getPersonDossier(name);
-      if (dossier) {
-        sections['dossier'] = fmtDossier(dossier);
-      }
+      const dossier = fmtPersonDossier(name);
+      if (dossier) sections.unshift(dossier);
     }
   }
 
-  const orderedSections: string[] = [];
-  for (const section of sectionOrder) {
-    if (sections[section]) {
-      orderedSections.push(sections[section]);
-    }
-  }
-
-  if (sections['dossier']) {
-    orderedSections.unshift(sections['dossier']);
-  }
-
-  return orderedSections.join('\n\n');
-}
-
-function fmtDossier(dossier: any): string {
-  const lines = [`## ${dossier.name}'s dossier`];
-  
-  if (dossier.context_notes) {
-    lines.push(`**Context notes**: ${dossier.context_notes}`);
-  }
-  
-  if (dossier.last_contact) {
-    const lastContact = new Date(dossier.last_contact).toLocaleDateString();
-    lines.push(`**Last contact**: ${lastContact}`);
-  }
-  
-  if (dossier.messages && dossier.messages.length > 0) {
-    lines.push('\n**Recent messages**:');
-    dossier.messages.slice(0, 3).forEach((msg: any) => {
-      lines.push(`- [${msg.direction === 'in' ? 'received' : 'sent'}]: ${msg.content}`);
-    });
-  }
-  
-  if (dossier.tasks && dossier.tasks.length > 0) {
-    lines.push('\n**Open tasks**:');
-    dossier.tasks.slice(0, 3).forEach((task: any) => {
-      lines.push(`- ${task.description}`);
-    });
-  }
-  
-  return lines.join('\n');
+  return sections.length ? sections.join("\n\n") : "no context available right now";
 }

@@ -1,4 +1,3 @@
-
 import { IMessageSDK } from '@photon-ai/imessage-kit';
 
 export interface NormalizedMessage {
@@ -9,88 +8,69 @@ export interface NormalizedMessage {
   isFromMe: boolean;
   isGroupChat: boolean;
   timestamp: number;
-  attachments: {
-    path: string;
-    mimeType?: string;
-  }[];
+  attachments: { path: string; mimeType?: string }[];
 }
 
-const normalizeMessage = (raw: any): NormalizedMessage => {
+const processedIds = new Set<string>();
+const MAX_PROCESSED = 10_000;
+
+function normalizeMessage(msg: any): NormalizedMessage {
   return {
-    id: raw.id || raw.guid,
-    text: raw.text || raw.body || raw.content || raw.message,
-    sender: raw.sender || raw.senderName || raw.from,
-    chatId: raw.chatId || raw.chatGuid || raw.chat_id,
-    isFromMe: Boolean(raw.isFromMe),
-    isGroupChat: Boolean(raw.isGroupChat || raw.isGroup || raw.chatType === 'group'),
-    timestamp: raw.date ? new Date(raw.date).getTime() : Date.now(),
-    attachments: (raw.attachments || []).map((a: any) => ({
-      path: a.path || a.filePath,
+    id: msg.id || msg.guid || '',
+    text: msg.text || msg.body || msg.content || msg.message || '',
+    sender: msg.sender || msg.senderName || msg.from || '',
+    chatId: msg.chatId || msg.chatGuid || msg.chat_id || '',
+    isFromMe: Boolean(msg.isFromMe),
+    isGroupChat: Boolean(msg.isGroupChat || msg.isGroup || msg.chatType === 'group'),
+    timestamp: msg.date ? new Date(msg.date).getTime() : Date.now(),
+    attachments: (msg.attachments || []).map((a: any) => ({
+      path: a.path || a.filePath || '',
       mimeType: a.mimeType || a.mime_type,
     })),
   };
-};
-
-const processedIds = new Set<string>();
-const MAX_PROCESSED_IDS = 10000;
-
-const dedup = (message: NormalizedMessage): NormalizedMessage | null => {
-  if (processedIds.has(message.id)) {
-    return null;
-  }
-  if (processedIds.size >= MAX_PROCESSED_IDS) {
-    processedIds.clear();
-  }
-  processedIds.add(message.id);
-  return message;
-};
+}
 
 let sdk: IMessageSDK | null = null;
 
-const getSDK = (): IMessageSDK => {
-  if (!sdk) {
-    sdk = new IMessageSDK();
-  }
+function getSDK(): IMessageSDK {
+  if (!sdk) sdk = new IMessageSDK();
   return sdk;
-};
+}
 
-export const sendText = async (to: string, text: string) => {
+export async function sendText(to: string, text: string): Promise<void> {
   try {
     await getSDK().send(to, text);
-  } catch (error) {
-    console.error('Error sending text message:', error);
+  } catch (e) {
+    console.error('[sdk] sendText failed:', e);
   }
-};
+}
 
-export const sendAudio = async (to: string, audioPath: string, caption?: string) => {
+export async function sendAudio(to: string, audioPath: string, caption?: string): Promise<void> {
   try {
     await getSDK().send(to, { files: [audioPath], text: caption });
-  } catch (error) {
-    console.error('Error sending audio message:', error);
+  } catch (e) {
+    console.error('[sdk] sendAudio failed:', e);
   }
-};
+}
 
-export const sendWithVoice = async (to: string, text: string, tts: any): Promise<string | null> => {
-  try {
-    const audioPath = await tts.speak(text);
-    if (audioPath) {
-      await sendAudio(to, audioPath);
-      return audioPath;
-    }
-  } catch (error) {
-    console.error('Error with TTS, falling back to text message:', error);
-  }
-  
-  await sendText(to, text);
-  return null;
-};
+export async function sendWithVoice(to: string, text: string, tts: (t: string) => Promise<string>): Promise<string | null> {
+  let audioPath: string | null = null;
+  try { audioPath = await tts(text); } catch (e) { console.warn("[sdk] TTS failed, falling back to text:", e); }
+  if (audioPath) await sendAudio(to, audioPath, text);
+  else await sendText(to, text);
+  return audioPath;
+}
 
-export const startListening = (onMessage: (message: NormalizedMessage) => void) => {
-  getSDK().startWatching((rawMessage) => {
-    const normalized = normalizeMessage(rawMessage);
-    const message = dedup(normalized);
-    if (message) {
-      onMessage(message);
-    }
+export async function startListening(onMessage: (msg: NormalizedMessage) => void): Promise<void> {
+  const s = getSDK();
+  await s.startWatching({
+    onMessage: async (raw: any) => {
+      const msg = normalizeMessage(raw);
+      if (!msg.id || processedIds.has(msg.id)) return;
+      if (processedIds.size >= MAX_PROCESSED) processedIds.clear();
+      processedIds.add(msg.id);
+      onMessage(msg);
+    },
   });
-};
+  console.log('[sdk] listening for messages');
+}

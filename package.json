@@ -1,21 +1,37 @@
-{ 
-     "name": "nudge", 
-     "type": "module", 
-     "private": true, 
-     "dependencies": { 
-       "@photon-ai/imessage-kit": "^2.1.2", 
-       "better-sqlite3": "^12.8.0", 
-       "@composio/core": "^0.6.7", 
-       "dotenv": "^17.3.1", 
-       "openai": "^6.33.0", 
-       "uuid": "^13.0.0" 
-     }, 
-     "devDependencies": { 
-       "@types/better-sqlite3": "^7.6.13", 
-       "@types/bun": "latest", 
-       "@types/uuid": "^11.0.0" 
-     }, 
-     "peerDependencies": { 
-       "typescript": "^6.0.2" 
-     } 
-   }
+{
+  "name": "nudge",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "testbench": "bun test src/tests/testbench.test.ts",
+    "test:1-config": "bun -e \"import { config } from './src/config'; console.log('CONFIG OK:', Object.keys(config).join(', '))\"",
+    "test:2-db": "bun -e \"import { getDb } from './src/memory/db'; const db = getDb(); const tables = db.prepare(\\\"SELECT name FROM sqlite_master WHERE type='table'\\\").all(); console.log('DB OK:', tables.map((t: any) => t.name).join(', '))\"",
+    "test:3-llm": "bun -e \"const { generate } = await import('./src/minimax/llm'); const r = await generate('you are a test', 'say hello in 3 words'); console.log('LLM OK:', r);\"",
+    "test:4-tts": "bun -e \"const { textToSpeech } = await import('./src/minimax/tts'); const p = await textToSpeech('testing nudge'); const s = require('fs').statSync(p); console.log('TTS OK:', p, '— size:', s.size, 'bytes');\"",
+    "test:5-composio": "bun -e \"const { isMockMode } = await import('./src/integrations/composio'); console.log('COMPOSIO mock mode:', isMockMode());\"",
+    "test:6-gmail": "bun -e \"const { pullUnreadEmails } = await import('./src/integrations/gmail'); const e = await pullUnreadEmails(3); console.log(e.length, 'emails'); e.forEach(em => console.log(' -', em.from, ':', em.subject));\"",
+    "test:7-calendar": "bun -e \"const { pullTodayEvents } = await import('./src/integrations/calendar'); const e = await pullTodayEvents(); console.log(e.length, 'events'); e.forEach(ev => console.log(' -', ev.title, ev.start));\"",
+    "test:8-personality": "bun -e \"const { validateResponse, getTemporalVoice } = await import('./src/agent/personality'); console.log('VOICE:', getTemporalVoice()); console.log('CLEAN:', validateResponse('I\\\\'d be happy to help! Certainly, here is your schedule. Furthermore, the meeting is at 2pm.'));\"",
+    "start": "bun run src/index.ts",
+    "dev": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@photon-ai/imessage-kit": "^2.1.2",
+    "better-sqlite3": "^12.8.0",
+    "composio-core": "^0.5.39",
+    "dotenv": "^17.3.1",
+    "openai": "^6.33.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/bun": "latest",
+    "@types/uuid": "^11.0.0"
+  },
+  "peerDependencies": {
+    "typescript": "^6.0.2"
+  },
+  "module": "index.ts"
+}
