@@ -9,7 +9,7 @@ import { splitIntoBubbles } from "../imessage/bubble-split";
 import { MessageBatcher } from "../imessage/batcher";
 import { analyzeCalendar } from "../integrations/calendar";
 import { analyzeGmail } from "../integrations/gmail";
-import { setDemoMode, isDemoMode, setVirtualTime, nowDate } from "../demo";
+import { setDemoMode, isDemoMode, setVirtualTime, nowDate, now } from "../demo";
 import { evaluate } from "./proactive/decision-engine";
 import { rankTasks, formatRankedPlan } from "./ranking";
 import { getCachedInsights } from "./crossref";
@@ -178,7 +178,7 @@ async function handleOnboarding(msg: NormalizedMessage): Promise<boolean> {
       if (links.calendar) { await sendText(msg.chatId, `calendar: ${links.calendar}`); await sleep(500); }
       await sendText(msg.chatId, "same google account for both. text me when you're done");
 
-      pendingOAuth.set(phone, Date.now());
+      pendingOAuth.set(phone, now());
       onboardConvo.delete(phone);
     } else {
       updateUser(phone, { onboard_stage: "evaluating" });
