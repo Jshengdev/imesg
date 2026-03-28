@@ -11,6 +11,13 @@ function checkGates(content: string, userId?: string): string | null {
   return hash;
 }
 
+const ACTION_TRIGGERS = new Set(["task_nudge", "email_alert", "email_escalation", "pre_meeting", "cross_source"]);
+
+function getProactiveLabel(triggerType: string): string {
+  if (ACTION_TRIGGERS.has(triggerType)) return "🚨 this one's a real one —";
+  return "heads up, quick update —";
+}
+
 export async function sendProactive(triggerType: string, prompt: string, userId?: string, chatId?: string, phone?: string): Promise<void> {
   if (!chatId) return;
 
@@ -23,7 +30,9 @@ export async function sendProactive(triggerType: string, prompt: string, userId?
   const hash = checkGates(text, userId);
   if (!hash) return;
 
+  const label = getProactiveLabel(triggerType);
+  await sendText(chatId, label);
   await sendText(chatId, text);
   logProactive(triggerType, hash, userId);
-  console.log(`[proactive] sent ${triggerType} to ${chatId}: ${text.slice(0, 60)}...`);
+  console.log(`[proactive] sent ${triggerType} (${label}) to ${chatId}: ${text.slice(0, 60)}...`);
 }

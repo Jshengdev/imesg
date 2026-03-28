@@ -55,16 +55,17 @@ const EXTRACT_PROFILE_PROMPT = `extract the user's profile from this conversatio
 }
 only use what they said. don't invent.`;
 
-const REVEAL_PROMPT = `you just got access to someone's gmail and calendar. you're nudge — their new AI assistant who lives in iMessage.
+const REVEAL_PROMPT = `you just got access to someone's gmail and calendar. you're nudge — lives in iMessage.
 
-look at this data and introduce yourself by flexing what you already know about them. surprise them. be specific — reference actual email senders, meeting names, patterns you notice.
+your job: write ONE message (the "clock" message). you're sizing them up. combine their name, personality, and what you found in their data to make a sharp, specific read on who they are as a person. not useful info — just proving you see them. like a friend who just glanced at your phone and already knows your whole deal.
 
 rules:
-- MAX 3 separate short messages. each one is 1 sentence
-- first message: flex one specific thing you found (a name, a meeting, a pattern)
-- second message: one more observation that shows you actually looked
-- third message: "i'll keep an eye on things" or similar
-- be cocky about how much you already know. don't list. don't summarize. just drop specifics casually
+- ONE message only. 2 sentences max
+- reference something specific from their data that reveals WHO they are, not what's on their schedule
+- be perceptive not helpful. you're clocking them, not briefing them
+- example energy: "ah {name}, [specific observation that shows you get their vibe/situation]"
+- lowercase, no periods, casual
+- don't list anything. don't summarize. just read them
 
 their name: {name}
 their profile: {profile}
@@ -100,12 +101,10 @@ async function handleOnboarding(msg: NormalizedMessage): Promise<boolean> {
       updateUser(phone, { onboard_stage: "active" });
       const name = user?.name || "friend";
 
-      await sendText(msg.chatId, `locked in, ${name.toLowerCase()}`);
-      await sleep(1500);
       await sendText(msg.chatId, "give me a sec to look around...");
-      await sleep(2000);
+      await sleep(2500);
 
-      // Post-OAuth reveal — scan their data and surprise them
+      // Post-OAuth reveal — 3 beats: clock → got you → positioning
       try {
         const [cal, gmail] = await Promise.allSettled([
           analyzeCalendar(phone),
@@ -115,21 +114,68 @@ async function handleOnboarding(msg: NormalizedMessage): Promise<boolean> {
         const calData = cal.status === "fulfilled" ? cal.value.insights : "no calendar data yet";
         const emailData = gmail.status === "fulfilled" ? gmail.value.insights : "no email data yet";
 
+        // Beat 1: "Clock you" — sharp read on who they are
         const revealPrompt = REVEAL_PROMPT
           .replace("{name}", name)
           .replace("{profile}", user?.profile || "")
           .replace("{emails}", emailData)
           .replace("{calendar}", calData);
 
-        const reveal = await generate(revealPrompt, "introduce yourself based on what you found");
-        const bubbles = splitIntoBubbles(reveal.toLowerCase());
-        const cleaned = bubbles.map(b => validateResponse(b)).filter(b => b.length > 5);
-        if (cleaned.length) {
-          await sendBubbles(msg.chatId, cleaned);
+        const clockMsg = await generate(revealPrompt, "size them up in one message");
+        const cleanedClock = validateResponse(clockMsg.toLowerCase());
+        if (cleanedClock.length > 5) {
+          await sendText(msg.chatId, cleanedClock);
+        }
+        await sleep(2000);
+
+        // Beat 2: "I got you" — proactive + commands
+        const gotYouPrompt = `you're nudge. you just clocked someone and now you're telling them what you can do. but the vibe is "don't worry, i'm already watching" not "here's a feature list"
+
+write ONE message. structure:
+- start with something like "don't trip though" or "but you don't gotta do anything"
+- mention you're proactively keeping an eye on their calendar, inbox, and tasks
+- casually drop that they can text you things like "what's on my calendar", "check my email", "what should i focus on", or send you photos of assignments
+- end with "but honestly i'll probably hit you up first"
+
+rules:
+- one message, 2-3 sentences max
+- lowercase, no periods, casual
+- don't number things or use bullet points
+- make it sound like a friend explaining their deal, not a product tour`;
+
+        const gotYouMsg = await generate(gotYouPrompt, "tell them what you do");
+        const cleanedGotYou = validateResponse(gotYouMsg.toLowerCase());
+        if (cleanedGotYou.length > 5) {
+          await sendText(msg.chatId, cleanedGotYou);
+        }
+        await sleep(2000);
+
+        // Beat 3: "Positioning lock" — secretary you always wanted, tied to their context
+        const positionPrompt = `you're nudge. you just told someone what you can do. now lock the positioning.
+
+the user is: ${name}, ${user?.profile || "busy person"}
+their calendar: ${calData.slice(0, 200)}
+their email: ${emailData.slice(0, 200)}
+
+write ONE message that:
+- frames this as "you just unlocked the secretary you've always wanted" (or a variation that fits their context)
+- ties it specifically to THEIR situation — reference something concrete about their life that makes this feel built for them
+- make them feel like this is exactly what they needed at exactly the right time
+
+rules:
+- one message, 1-2 sentences
+- lowercase, no periods, casual
+- should feel like a closing line that makes them go "damn, yeah actually"
+- don't be generic. connect it to their actual data`;
+
+        const positionMsg = await generate(positionPrompt, "lock the positioning");
+        const cleanedPosition = validateResponse(positionMsg.toLowerCase());
+        if (cleanedPosition.length > 5) {
+          await sendText(msg.chatId, cleanedPosition);
         }
       } catch (e) {
         console.warn("[handler] reveal failed:", e);
-        await sendText(msg.chatId, "i'm in your inbox and calendar now. i'll keep things tight — you just do your thing");
+        await sendText(msg.chatId, "i see you. don't worry about keeping track of everything — that's my job now");
       }
 
       return true;
