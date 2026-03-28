@@ -1,7 +1,7 @@
 import { generate, generateJSON, generateWithTools } from "../minimax/llm";
 import { analyzeImage } from "../minimax/vision";
 import { sendText, sendBubbles, type NormalizedMessage } from "../imessage/sdk";
-import { logAgent, resetDatabase, registerUser, getUserByPhone, getActiveUsers, updateUser, getTaskQueue, getTasksWithDetails, completeTaskByDescription, getDependentTasks } from "../memory/db";
+import { logAgent, resetDatabase, registerUser, getUserByPhone, getActiveUsers, updateUser, getTaskQueue, getTasksWithDetails, completeTaskByDescription, getDependentTasks, storeMessage } from "../memory/db";
 import { checkUserConnected, getOAuthLinks } from "../integrations/composio";
 import { SYSTEM_PROMPT, POST_HISTORY_ENFORCEMENT, validateResponse, validateDraft, getTemporalVoice } from "./personality";
 import { TOOL_DEFS, createToolExecutor } from "./tools";
@@ -13,6 +13,7 @@ import { setDemoMode, isDemoMode, setVirtualTime, nowDate } from "../demo";
 import { evaluate } from "./proactive/decision-engine";
 import { rankTasks, formatRankedPlan } from "./ranking";
 import { getCachedInsights } from "./crossref";
+import { runExtractionOnce } from "../listener/extractor";
 
 // --- Onboarding state ---
 
