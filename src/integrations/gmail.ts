@@ -120,6 +120,42 @@ export async function saveEmailDraft(
   }
 }
 
+export async function sendEmail(
+  to: string,
+  subject: string,
+  body: string,
+  phone?: string,
+): Promise<{ success: boolean; message: string }> {
+  if (isMockMode()) return { success: false, message: "composio offline — can't send email" };
+
+  const strategies = [
+    { actionName: "GMAIL_SEND_EMAIL", params: { to, subject, body, userId: "me" } },
+    { actionName: "GMAIL_SEND_EMAIL", params: { to, subject, message: { raw: Buffer.from(`to: ${to}\nsubject: ${subject}\n\n${body}`).toString("base64") } } },
+    { actionName: "GMAIL_EMAILS_SEND", params: { to, subject, body } },
+    { actionName: "GMAIL_SEND", params: { to, subject, body } },
+  ];
+
+  try {
+    const entity = phone ? await getUserEntity(phone) : null;
+    for (const s of strategies) {
+      try {
+        const result = entity
+          ? await entity.execute(s)
+          : await executeWithFallback([s], ["id", "messageId", "sent", "success"], "gmail-send", phone);
+        if (result) {
+          console.log(`[gmail] sent email to ${to}: ${subject}`);
+          return { success: true, message: `sent — "${subject}" to ${to}` };
+        }
+      } catch (err) {
+        console.warn(`[gmail] ${s.actionName} failed:`, (err as Error).message);
+      }
+    }
+    return { success: false, message: "couldn't send — all strategies failed" };
+  } catch (err) {
+    return { success: false, message: `send failed: ${(err as Error).message}` };
+  }
+}
+
 export async function analyzeGmail(phone?: string): Promise<GmailAnalysis> {
   const emails = await pullUnreadEmails(20, phone);
   const structure = analyzeStructure(emails);

@@ -39,6 +39,21 @@ CREATE TABLE IF NOT EXISTS proactive_log (
   id TEXT PRIMARY KEY, user_id TEXT, trigger_type TEXT NOT NULL, content_hash TEXT NOT NULL,
   sent_at TEXT NOT NULL DEFAULT (datetime('now')));
   `);
+
+  // Task schema upgrades
+  const taskMigrations = [
+    "ALTER TABLE tasks ADD COLUMN estimated_minutes INTEGER",
+    "ALTER TABLE tasks ADD COLUMN effort_level TEXT DEFAULT 'focused'",
+    "ALTER TABLE tasks ADD COLUMN environment TEXT DEFAULT 'anywhere'",
+    "ALTER TABLE tasks ADD COLUMN depends_on TEXT",
+    "ALTER TABLE tasks ADD COLUMN deadline_source TEXT",
+    "ALTER TABLE tasks ADD COLUMN deadline_confidence TEXT DEFAULT 'inferred'",
+    "ALTER TABLE tasks ADD COLUMN completed_at TEXT",
+  ];
+  for (const sql of taskMigrations) {
+    try { _db.exec(sql); } catch {} // Ignore "column already exists"
+  }
+
   return _db;
 }
 
@@ -115,13 +130,20 @@ export function markProcessed(ids: string[]): void {
 export function storeTasks(tasks: {
   source: string; description: string; source_ref?: string;
   assigned_by?: string; deadline?: string; urgency?: number;
+  estimated_minutes?: number; effort_level?: string; environment?: string;
+  depends_on?: string; deadline_source?: string; deadline_confidence?: string;
 }[], userId?: string): void {
   const db = getDb();
-  const stmt = db.prepare(`INSERT OR IGNORE INTO tasks (id,user_id,source,source_ref,description,assigned_by,deadline,urgency)
-    VALUES (@id,@user_id,@source,@source_ref,@description,@assigned_by,@deadline,@urgency)`);
+  const stmt = db.prepare(`INSERT OR IGNORE INTO tasks (id, user_id, source, source_ref, description, assigned_by, deadline, urgency, estimated_minutes, effort_level, environment, depends_on, deadline_source, deadline_confidence)
+    VALUES (@id, @user_id, @source, @source_ref, @description, @assigned_by, @deadline, @urgency, @estimated_minutes, @effort_level, @environment, @depends_on, @deadline_source, @deadline_confidence)`);
   db.transaction((tasks: any[]) => {
-    for (const t of tasks) stmt.run({ id: uid(), user_id: userId ?? null, source: t.source, source_ref: t.source_ref ?? null,
-      description: t.description, assigned_by: t.assigned_by ?? null, deadline: t.deadline ?? null, urgency: t.urgency ?? 3 });
+    for (const t of tasks) stmt.run({
+      id: uid(), user_id: userId ?? null, source: t.source, source_ref: t.source_ref ?? null,
+      description: t.description, assigned_by: t.assigned_by ?? null, deadline: t.deadline ?? null, urgency: t.urgency ?? 3,
+      estimated_minutes: t.estimated_minutes ?? null, effort_level: t.effort_level ?? null,
+      environment: t.environment ?? null, depends_on: t.depends_on ?? null,
+      deadline_source: t.deadline_source ?? null, deadline_confidence: t.deadline_confidence ?? null,
+    });
   })(tasks);
 }
 
@@ -192,6 +214,44 @@ export function getTriggerEngagement(days = 7, userId?: string): { trigger_type:
     GROUP BY p.trigger_type
   `).all({ offset: `-${days} days` }) as any[];
   return rows.map(r => ({ ...r, rate: r.total > 0 ? r.engaged / r.total : 0 }));
+}
+
+export function completeTask(taskId: string): boolean {
+  const result = getDb().prepare(
+    `UPDATE tasks SET status='done', completed_at=datetime('now'), updated_at=datetime('now') WHERE id=@taskId AND status='open'`
+  ).run({ taskId });
+  return result.changes > 0;
+}
+
+export function completeTaskByDescription(description: string, userId?: string): { found: boolean; taskId?: string } {
+  const keywords = description.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  const tasks = getTaskQueue(userId);
+  for (const task of tasks) {
+    const desc = (task.description || "").toLowerCase();
+    const matchCount = keywords.filter(k => desc.includes(k)).length;
+    if (matchCount >= Math.ceil(keywords.length * 0.5)) {
+      completeTask(task.id);
+      return { found: true, taskId: task.id };
+    }
+  }
+  return { found: false };
+}
+
+export function getTasksWithDetails(userId?: string): any[] {
+  if (userId) {
+    return getDb().prepare(
+      `SELECT * FROM tasks WHERE status='open' AND user_id=@userId ORDER BY urgency DESC, created_at ASC`
+    ).all({ userId });
+  }
+  return getDb().prepare(
+    `SELECT * FROM tasks WHERE status='open' ORDER BY urgency DESC, created_at ASC`
+  ).all();
+}
+
+export function getDependentTasks(taskId: string): any[] {
+  return getDb().prepare(
+    `SELECT * FROM tasks WHERE depends_on LIKE @pattern AND status='open'`
+  ).all({ pattern: `%${taskId}%` });
 }
 
 export function resetDatabase(): void {

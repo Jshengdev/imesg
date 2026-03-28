@@ -3,6 +3,8 @@ import { getTaskQueue } from "../../memory/db";
 import { pullTodayEvents } from "../../integrations/calendar";
 import { pullUnreadEmails } from "../../integrations/gmail";
 import { sendProactive } from "./engine";
+import { normalizeNameWords } from "../../utils";
+import { now } from "../../demo";
 
 type UserCtx = { userId: string; chatId: string; phone: string };
 
@@ -11,10 +13,10 @@ const sentEventIds = new Set<string>();
 export async function preMeetingPrep(u: UserCtx): Promise<void> {
   try {
     const events = await pullTodayEvents(u.phone);
-    const now = Date.now();
+    const nowMs = now();
     const threshold = config.PRE_MEETING_MINUTES * 60 * 1000;
     for (const ev of events) {
-      const ms = ev.start.getTime() - now;
+      const ms = ev.start.getTime() - nowMs;
       const evKey = `${u.userId}::${ev.title}::${ev.start.toISOString()}`;
       if (ms > 0 && ms <= threshold && !sentEventIds.has(evKey)) {
         if (sentEventIds.size >= 500) sentEventIds.clear();
@@ -30,9 +32,9 @@ const sentFollowUpKeys = new Set<string>();
 export async function followUpReminder(u: UserCtx): Promise<void> {
   try {
     const events = await pullTodayEvents(u.phone);
-    const now = Date.now();
+    const nowMs = now();
     for (const ev of events) {
-      const elapsed = now - ev.end.getTime();
+      const elapsed = nowMs - ev.end.getTime();
       if (elapsed < 30 * 60 * 1000 || elapsed > 3 * 60 * 60 * 1000) continue;
       if (!ev.attendees.length) continue;
       const key = `${u.userId}::${ev.title}::${ev.end.toISOString()}`;
@@ -51,14 +53,14 @@ const sentPairingKeys = new Set<string>();
 
 export async function crossSourcePairing(u: UserCtx): Promise<void> {
   try {
-    const now = Date.now();
+    const nowMs = now();
     const [events, emails, tasks] = await Promise.all([
       pullTodayEvents(u.phone), pullUnreadEmails(10, u.phone), Promise.resolve(getTaskQueue(u.userId)),
     ]);
-    const upcoming = events.filter(e => e.start.getTime() > now && e.start.getTime() - now <= 2 * 60 * 60 * 1000);
+    const upcoming = events.filter(e => e.start.getTime() > nowMs && e.start.getTime() - nowMs <= 2 * 60 * 60 * 1000);
     if (!upcoming.length) return;
 
-    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z ]/g, "").split(" ").filter(Boolean);
+    const normalize = normalizeNameWords;
     const emailNames = new Map<string, string>();
     for (const e of emails) { for (const w of normalize(e.from)) if (w.length > 2) emailNames.set(w, e.subject); }
     const taskNames = new Map<string, string>();

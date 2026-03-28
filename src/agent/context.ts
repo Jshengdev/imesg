@@ -1,15 +1,13 @@
 import { getTaskQueue, getRecentConversation, getPersonDossier } from "../memory/db";
 import { analyzeCalendar, type CalendarEvent, type FreeBlock, type CalendarAnalysis } from "../integrations/calendar";
 import { analyzeGmail, type EmailSummary, type GmailAnalysis } from "../integrations/gmail";
-
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
+import { fmtTime, normalizeNameWords } from "../utils";
+import { nowDate } from "../demo";
 
 // --- Cross-referencing: connect people across sources ---
 
 function crossReference(events: CalendarEvent[], emails: EmailSummary[], tasks: any[]): string {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z ]/g, "").split(" ").filter(w => w.length > 2);
+  const norm = normalizeNameWords;
 
   const personSources = new Map<string, { events: string[]; emails: string[]; tasks: string[] }>();
   const touch = (name: string) => {
@@ -44,7 +42,7 @@ function crossReference(events: CalendarEvent[], emails: EmailSummary[], tasks: 
 // --- Situational awareness ---
 
 function fmtSituation(events: CalendarEvent[], freeBlocks: FreeBlock[], tasks: any[], emails: EmailSummary[]): string {
-  const now = new Date();
+  const now = nowDate();
   const lines: string[] = [];
 
   const currentMeeting = events.find(e => e.start <= now && e.end > now);

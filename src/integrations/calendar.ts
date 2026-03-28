@@ -1,5 +1,6 @@
-import { executeWithFallback } from "./composio.js";
+import { executeWithFallback, getUserEntity, isMockMode } from "./composio.js";
 import { generateJSON } from "../minimax/llm";
+import { nowDate } from "../demo";
 
 export interface CalendarEvent {
   title: string;
@@ -27,7 +28,7 @@ const SEARCH_KEYS = ["items", "events", "event_data", "results", "data"];
 // --- Pull + Normalize ---
 
 export async function pullTodayEvents(phone?: string): Promise<CalendarEvent[]> {
-  const now = new Date();
+  const now = nowDate();
   const timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
   const timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
   const raw = await executeWithFallback([
@@ -148,4 +149,75 @@ export async function analyzeCalendar(phone?: string): Promise<CalendarAnalysis>
       tags: structure.tags,
     };
   }
+}
+
+export async function blockTime(
+  title: string,
+  startTime: Date,
+  durationMin: number,
+  phone?: string,
+): Promise<{ success: boolean; message: string }> {
+  if (isMockMode()) return { success: false, message: "composio offline — can't block time" };
+
+  const endTime = new Date(startTime.getTime() + durationMin * 60 * 1000);
+  const fmtTime = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const dateStr = startTime.toISOString().split("T")[0];
+
+  const strategies = [
+    { actionName: "GOOGLECALENDAR_CREATE_EVENT", params: { summary: title, start_time: startTime.toISOString(), end_time: endTime.toISOString(), calendarId: "primary" } },
+    { actionName: "GOOGLECALENDAR_CREATE_EVENT", params: { title, start: { dateTime: startTime.toISOString() }, end: { dateTime: endTime.toISOString() } } },
+    { actionName: "GOOGLECALENDAR_CREATE_EVENT", params: { summary: title, start_date_time: startTime.toISOString(), end_date_time: endTime.toISOString() } },
+    { actionName: "GOOGLECALENDAR_EVENTS_INSERT", params: { summary: title, start: { dateTime: startTime.toISOString() }, end: { dateTime: endTime.toISOString() } } },
+  ];
+
+  try {
+    const entity = phone ? await getUserEntity(phone) : null;
+    for (const s of strategies) {
+      try {
+        const result = entity
+          ? await entity.execute(s)
+          : await executeWithFallback([s], ["id", "eventId", "success", "created"], "calendar-block", phone);
+        if (result) {
+          console.log(`[calendar] blocked ${fmtTime(startTime)}-${fmtTime(endTime)}: ${title}`);
+          return { success: true, message: `blocked ${dateStr} ${fmtTime(startTime)}-${fmtTime(endTime)} — ${title}` };
+        }
+      } catch (err) {
+        console.warn(`[calendar] ${s.actionName} failed:`, (err as Error).message);
+      }
+    }
+    return { success: false, message: "couldn't block time — all strategies failed" };
+  } catch (err) {
+    return { success: false, message: `block failed: ${(err as Error).message}` };
+  }
+}
+
+export async function findAndBlockTime(
+  title: string,
+  durationMin: number,
+  preferredDate?: Date,
+  phone?: string,
+): Promise<{ success: boolean; message: string; blockedTime?: { start: Date; end: Date } }> {
+  const targetDate = preferredDate || new Date();
+
+  if (isMockMode()) return { success: false, message: "composio offline — can't find time" };
+
+  const events = await pullTodayEvents(phone);
+  const freeBlocks = findFreeBlocks(events).filter(b => b.durationMin >= durationMin);
+
+  if (freeBlocks.length === 0) {
+    const tomorrow = new Date(targetDate);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    return await blockTime(title, tomorrow, durationMin, phone).then(r => ({
+      ...r,
+      blockedTime: r.success ? { start: tomorrow, end: new Date(tomorrow.getTime() + durationMin * 60000) } : undefined
+    }));
+  }
+
+  const block = freeBlocks[0];
+  const result = await blockTime(title, block.start, durationMin, phone);
+  return {
+    ...result,
+    blockedTime: result.success ? { start: block.start, end: block.end } : undefined
+  };
 }

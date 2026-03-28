@@ -1,8 +1,9 @@
 import type { ToolDef } from "../minimax/llm";
-import { analyzeCalendar } from "../integrations/calendar";
-import { analyzeGmail, pullUnreadEmails, saveEmailDraft } from "../integrations/gmail";
+import { analyzeCalendar, blockTime, findAndBlockTime } from "../integrations/calendar";
+import { analyzeGmail, pullUnreadEmails, saveEmailDraft, sendEmail } from "../integrations/gmail";
 import { getTaskQueue, getRecentConversation, getPersonDossier } from "../memory/db";
 import { getCachedInsights } from "./crossref";
+import { fmtTime } from "../utils";
 
 // --- Tool definitions (OpenAI function-calling format) ---
 
@@ -74,6 +75,39 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "send_email",
+      description: "SEND an email immediately to the specified recipient. USE THIS when the user says 'send', 'just send it', 'go ahead and send', 'do it', or wants to send an email RIGHT NOW. does NOT save a draft — actually sends it. requires to, subject, and body.",
+      parameters: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "recipient email address" },
+          subject: { type: "string", description: "email subject line" },
+          body: { type: "string", description: "the full email body text" },
+        },
+        required: ["to", "subject", "body"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "block_time",
+      description: "block out time on the user's calendar for a specific task or focus time. use when user wants to block calendar time for working on a task, thesis, or any focused work session. provide title and duration in minutes.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "what to call this time block (e.g. 'thesis work', 'focus time', 'PR review')" },
+          duration_min: { type: "number", description: "how many minutes to block (e.g. 60 for 1 hour, 120 for 2 hours)" },
+          date: { type: "string", description: "optional: date string like '2024-03-15' or 'tomorrow', defaults to today" },
+          hour: { type: "number", description: "optional: hour of day (0-23), defaults to first available free slot" },
+        },
+        required: ["title", "duration_min"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_cross_insights",
       description: "get smart cross-source connections — people who appear in calendar + email + tasks, prep needed, patterns across sources. use to connect dots before giving advice.",
       parameters: { type: "object", properties: {}, required: [] },
@@ -82,10 +116,6 @@ export const TOOL_DEFS: ToolDef[] = [
 ];
 
 // --- Formatting helpers ---
-
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
 
 function fmtCalendar(cal: Awaited<ReturnType<typeof analyzeCalendar>>): string {
   const lines: string[] = [];
@@ -175,6 +205,43 @@ export function createToolExecutor(phone?: string) {
           phone,
         );
         return result.message;
+      }
+
+      case "send_email": {
+        const result = await sendEmail(
+          args.to as string,
+          args.subject as string,
+          args.body as string,
+          phone,
+        );
+        return result.message;
+      }
+
+      case "block_time": {
+        const title = args.title as string;
+        const durationMin = args.duration_min as number;
+        let startTime = new Date();
+
+        if (args.date) {
+          const dateStr = args.date as string;
+          if (dateStr === "tomorrow") {
+            startTime.setDate(startTime.getDate() + 1);
+          } else {
+            startTime = new Date(dateStr);
+          }
+        }
+
+        if (args.hour !== undefined) {
+          startTime.setHours(args.hour as number, 0, 0, 0);
+        }
+
+        if (args.hour === undefined) {
+          const result = await findAndBlockTime(title, durationMin, startTime, phone);
+          return result.message;
+        } else {
+          const result = await blockTime(title, startTime, durationMin, phone);
+          return result.message;
+        }
       }
 
       case "get_cross_insights":

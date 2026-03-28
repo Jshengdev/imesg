@@ -2,6 +2,7 @@ import { analyzeCalendar } from "../integrations/calendar";
 import { analyzeGmail } from "../integrations/gmail";
 import { getTaskQueue } from "../memory/db";
 import { generate } from "../minimax/llm";
+import { fmtTime } from "../utils";
 
 let cachedInsights = "no cross-source insights yet";
 let running = false;
@@ -19,10 +20,6 @@ look for:
 return 3-5 short bullet points. be specific — use real names, times, subjects.
 if nothing connects, say "no cross-source connections right now".
 do NOT make things up. only report connections you actually see in the data.`;
-
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-}
 
 async function runCrossRef(phone?: string): Promise<void> {
   if (running) return;

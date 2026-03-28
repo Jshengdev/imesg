@@ -3,6 +3,7 @@ import { getTaskQueue } from "../../memory/db";
 import { pullTodayEvents, findFreeBlocks } from "../../integrations/calendar";
 import { pullUnreadEmails } from "../../integrations/gmail";
 import { sendProactive } from "./engine";
+import { nowDate } from "../../demo";
 
 type UserCtx = { userId: string; chatId: string; phone: string };
 
@@ -37,7 +38,7 @@ export async function scheduleOptimizer(u: UserCtx): Promise<void> {
   try {
     const events = await pullTodayEvents(u.phone);
     const blocks = findFreeBlocks(events);
-    const now = new Date();
+    const now = nowDate();
     const nextBlock = blocks.find(b => b.start.getTime() > now.getTime() && b.durationMin >= 30);
     if (!nextBlock) return;
 
@@ -95,7 +96,7 @@ export async function endOfDayReview(u: UserCtx): Promise<void> {
 }
 
 export function scheduleMorningBriefing(u: UserCtx): void {
-  const now = new Date();
+  const now = nowDate();
   const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), config.MORNING_BRIEFING_HOUR, 0, 0);
   if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1);
   const ms = target.getTime() - now.getTime();
@@ -107,7 +108,7 @@ export function scheduleMorningBriefing(u: UserCtx): void {
 }
 
 export function scheduleEodReview(u: UserCtx): void {
-  const now = new Date();
+  const now = nowDate();
   const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), config.EOD_REVIEW_HOUR, 0, 0);
   if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1);
   const ms = target.getTime() - now.getTime();
