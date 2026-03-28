@@ -1,85 +1,74 @@
 # iMessage AI Assistant: Specification
 
-## 1. Overview
+## Overview
+iMesg is an AI-powered iMessage assistant that provides intelligent message assistance, task management, calendar integration, and proactive reminders using MiniMax AI models.
 
-### 1.1. Project Summary
+## System Architecture
 
-A Node.js/Bun-based background service that acts as an AI assistant for iMessage. It connects to the local iMessage data, processes conversations, and responds in a dedicated thread.
+```mermaid
+graph TD
+  A[iMessage] --> B[Message Router]
+  B --> C[Listener: Extract Tasks]
+  B --> D[Agent: Generate Responses]
+  D --> E[TTS: Voice Notes]
+  D --> F[Calendar Integration]
+  D --> G[Gmail Integration]
+  C --> H[(SQLite DB)]
+  D --> H
+```
 
-### 1.2. Goals
+## Module Specifications
 
-To create a personal AI assistant that can manage tasks, provide information, and interact with other services, all within the iMessage ecosystem.
+### Core Modules
+| Module | File | Description |
+|--------|------|-------------|
+| Configuration | [01-CONFIG.md](01-CONFIG.md) | Environment variables and app settings |
+| MiniMax LLM | [02-MINIMAX-LLM.md](02-MINIMAX-LLM.md) | Text generation with M2.7 model |
+| MiniMax TTS | [03-MINIMAX-TTS.md](03-MINIMAX-TTS.md) | Text-to-speech with Speech 2.8 |
+| MiniMax Vision | [04-MINIMAX-VISION.md](04-MINIMAX-VISION.md) | Image analysis with vision |
+| iMessage SDK | [05-IMESSAGE-SDK.md](05-IMESSAGE-SDK.md) | Send/receive iMessages |
+| iMessage Router | [06-IMESSAGE-ROUTER.md](06-IMESSAGE-ROUTER.md) | Route messages to handlers |
+| Database | [07-DATABASE.md](07-DATABASE.md) | SQLite persistence layer |
 
-### 1.3. Non-Goals
+### Agent Modules
+| Module | File | Description |
+|--------|------|-------------|
+| Personality | [08-AGENT-PERSONALITY.md](08-AGENT-PERSONALITY.md) | Nudge persona configuration |
+| Context | [09-AGENT-CONTEXT.md](09-AGENT-CONTEXT.md) | Context assembly for responses |
+| Handler | [10-AGENT-HANDLER.md](10-AGENT-HANDLER.md) | Intent classification and response |
+| Agent Router | [11-AGENT-ROUTER.md](11-AGENT-ROUTER.md) | SDK to handler bridging |
 
-This is not a GUI application. It has no web, desktop, or mobile interface. The user interacts with it entirely through iMessage.
+### Proactive Engine
+| Module | File | Description |
+|--------|------|-------------|
+| Proactive Engine | [12-PROACTIVE-ENGINE.md](12-PROACTIVE-ENGINE.md) | Rate limiting and deduplication |
+| Triggers | [13-PROACTIVE-TRIGGERS.md](13-PROACTIVE-TRIGGERS.md) | Scheduled and event triggers |
 
-## 2. System Architecture
+### Integrations
+| Module | File | Description |
+|--------|------|-------------|
+| Composio | [15-COMPOSIO.md](15-COMPOSIO.md) | Third-party integration framework |
+| Calendar | [16-CALENDAR.md](16-CALENDAR.md) | Google Calendar integration |
+| Gmail | [17-GMAIL.md](17-GMAIL.md) | Gmail integration |
 
-### 2.1. Core Components
+### Listener
+| Module | File | Description |
+|--------|------|-------------|
+| Extractor | [14-LISTENER-EXTRACTOR.md](14-LISTENER-EXTRACTOR.md) | Task extraction from messages |
 
-- **Listener**: Monitors iMessage conversations for tasks and triggers.
-- **Agent**: Executes tasks and communicates with the user in a dedicated iMessage thread.
-- **iMessage Kit**: The bridge to the local iMessage database and sending functionality.
-- **MiniMax AI**: The suite of AI models for language understanding, text-to-speech, and vision.
-- **Composio**: The integration layer for third-party services like Google Calendar and Gmail.
-- **SQLite Database**: For local storage of messages, tasks, and logs.
-
-### 2.2. Technology Stack
-
+## Technology Stack
 - **Runtime**: Bun
 - **Language**: TypeScript
-- **iMessage Integration**: `@photon-ai/imessage-kit`
+- **iMessage**: `@photon-ai/imessage-kit`
 - **Database**: `better-sqlite3`
-- **AI Models**: MiniMax (M2.7, Speech 2.8, Vision) via `openai` client
-- **Service Integration**: `composio-core`
-- **Configuration**: `dotenv`
-- **Utilities**: `uuid`
+- **AI**: MiniMax (M2.7, Speech 2.8)
+- **Integrations**: `composio-core`
 
-## 3. Features
-
-### 3.1. Real-time Message Processing
-
-The Listener will continuously monitor `chat.db` for new messages.
-
-### 3.2. Task Extraction
-
-The Listener will use the MiniMax LLM to identify actionable tasks from conversations.
-
-### 3.3. Dedicated Agent Thread
-
-The Agent will communicate with the user in a separate iMessage thread to avoid cluttering personal conversations.
-
-### 3.4. Voice Note Responses
-
-The Agent will use the MiniMax TTS service to generate voice note responses.
-
-### 3.5. Google Calendar & Gmail Integration
-
-The Agent will use Composio to interact with Google Calendar and Gmail.
-
-### 3.6. Local Data Persistence
-
-The system will use a local SQLite database to store messages, tasks, and logs.
-
-### 3.7. Image Analysis
-
-The system will be able to analyze images sent in iMessage conversations.
-
-## 4. Implementation Details
-
-### 4.1. Configuration
-
-API keys and other sensitive data will be stored in a `.env` file and accessed via a typed `config.ts` module.
-
-### 4.2. Database Schema
-
-The database will have tables for `messages`, `tasks`, `people`, `agent_log`, and `proactive_log`.
-
-### 4.3. AI Model Interaction
-
-All interactions with the MiniMax APIs will be centralized in their respective modules (`llm.ts`, `tts.ts`, `vision.ts`).
-
-### 4.4. iMessage Routing
-
-A router will be implemented to direct messages to the appropriate handler (Agent or Listener) based on the chat of origin.
+## Key Features
+1. **Real-time Message Processing** - Monitor iMessage for new messages
+2. **Task Extraction** - Identify actionable items from conversations
+3. **Voice Responses** - Generate and send voice notes
+4. **Calendar Integration** - Check schedule, find free time
+5. **Gmail Integration** - Monitor inbox, get summaries
+6. **Proactive Nudges** - Morning briefings, task reminders, meeting prep
+7. **Image Analysis** - Understand photos sent in messages
