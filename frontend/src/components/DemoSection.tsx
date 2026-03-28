@@ -167,12 +167,13 @@ export function DemoSection() {
   ))
 
   return (
-    <>
+    <section className="hero-demo-section">
       <div className="demo-track" id="demoTrack">
         <div className="sticky-stage" id="stickyStage">
-          <div className="stage-label" id="stageLabel">
-            <h2>Every app collects your life.</h2>
-            <p>Nudge gives it back.</p>
+          <div className="hero-intro">
+            <div className="hero-badge">try it now &mdash; text 626-722-1956</div>
+            <h1 className="hero-wordmark">nudge</h1>
+            <p className="hero-sub">Your texts, your email, your calendar.<br/>One friend who actually pays attention.</p>
           </div>
 
           <div className="frame-outer">
@@ -284,12 +285,12 @@ export function DemoSection() {
           </div>
 
           <div className="cta-wrap" id="ctaWrap">
-            <button className="cta-btn" onClick={() => document.getElementById('waitlist')?.scrollIntoView({behavior:'smooth'})}>request access &rarr;</button>
-            <div className="cta-sub">nudge is in private beta</div>
+            <a className="cta-btn" href="sms:+16267221956">try it now &rarr;</a>
+            <div className="cta-phone">626-722-1956</div>
           </div>
         </div>
       </div>
       <div className="scroll-progress" id="scrollProgress"></div>
-    </>
+    </section>
   )
 }

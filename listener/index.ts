@@ -104,3 +104,7 @@ await sdk.startWatching({
 });
 
 console.log("[listener] watching messages — forwarding to agent");
+
+// Keep the process alive; startWatching resolves immediately and the poll
+// interval alone does not hold the event loop open in all SDK versions.
+await new Promise(() => {});

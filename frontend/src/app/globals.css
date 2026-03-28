@@ -8,46 +8,34 @@ body {
   overflow-x: hidden;
 }
 
-/* ─── HERO ──────────────────────────────────────────────────────────────────── */
-.hero {
-  min-height: 100vh;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  text-align: center; padding: 80px 24px 60px;
-  gap: 18px; position: relative; background: #fff;
+/* ─── HERO + DEMO ────────────────────────────────────────────────────────────── */
+.hero-demo-section {
+  background: #fff;
 }
 
-.hero-logo {
-  display: flex; align-items: center; gap: 14px;
-  margin-bottom: 8px;
+.hero-intro {
+  display: flex; flex-direction: column;
+  align-items: center; text-align: center;
+  gap: 12px; padding-bottom: 8px;
 }
-.hero-logo-mark {
-  width: 56px; height: 56px; border-radius: 50%;
-  background: linear-gradient(160deg, #e8edf5 0%, #c8d4e8 60%, #b0c0d8 100%);
-  box-shadow: 0 2px 12px rgba(0,0,0,0.07), inset 0 1px 0 rgba(255,255,255,0.7);
-  flex-shrink: 0;
+.hero-badge {
+  font-size: 11px; font-weight: 500; letter-spacing: 0.2px;
+  color: rgba(0,0,0,0.45);
+  background: rgba(0,0,0,0.05);
+  border: 0.5px solid rgba(0,0,0,0.1);
+  border-radius: 20px; padding: 5px 14px;
 }
+
 .hero-wordmark {
-  font-size: clamp(52px, 9vw, 88px);
-  font-weight: 600; letter-spacing: -3px; line-height: 1.0;
-  color: #c4c4c4;
+  font-size: clamp(40px, 6vw, 64px);
+  font-weight: 600; letter-spacing: -2.5px; line-height: 1.0;
+  color: #565656;
 }
 
 .hero-sub {
-  font-size: clamp(15px, 2vw, 18px);
-  color: rgba(0,0,0,0.38);
-  max-width: 400px; line-height: 1.65;
-}
-
-.scroll-cue {
-  position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  font-size: 11px; color: rgba(0,0,0,0.2); letter-spacing: 0.3px;
-  animation: nudgeBounce 2.2s ease-in-out infinite;
-}
-@keyframes nudgeBounce {
-  0%,100% { opacity: 0.3; transform: translateX(-50%) translateY(0); }
-  50%     { opacity: 0.7; transform: translateX(-50%) translateY(4px); }
+  font-size: clamp(13px, 1.6vw, 16px);
+  color: rgba(0,0,0,0.35);
+  max-width: 360px; line-height: 1.65;
 }
 
 /* ─── SHARED SECTION BASE ───────────────────────────────────────────────────── */
@@ -70,23 +58,14 @@ body {
   position: sticky; top: 0; height: 100vh;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  gap: 24px; overflow: hidden; background: #fff;
+  gap: 16px; overflow: hidden; background: #fff;
+  padding: 24px 24px 16px;
 }
 .sticky-stage::before {
   content: ''; position: absolute; inset: 0;
   background: radial-gradient(ellipse 70% 60% at 50% 40%, rgba(0,122,255,0.022) 0%, transparent 70%);
   pointer-events: none;
 }
-.stage-label {
-  text-align: center; opacity: 0; transform: translateY(12px);
-  transition: opacity 0.5s ease, transform 0.5s ease;
-}
-.stage-label.show { opacity: 1; transform: none; }
-.stage-label h2 {
-  font-size: clamp(20px,3vw,32px); font-weight: 600;
-  letter-spacing: -0.8px; margin-bottom: 6px; color: #c8c8c8;
-}
-.stage-label p { font-size: 13px; color: rgba(0,0,0,0.28); }
 
 /* side progress dots */
 .scroll-progress {
@@ -249,6 +228,8 @@ body {
 .cta-btn:hover  { background: #0066d6; }
 .cta-btn:active { transform: scale(0.97); }
 .cta-sub { font-size: 11px; color: rgba(0,0,0,0.28); }
+.cta-phone { font-size: 12px; color: rgba(0,0,0,0.35); letter-spacing: 0.2px; }
+a.cta-btn { display: inline-block; text-decoration: none; }
 
 /* ─── PROBLEM SECTION ───────────────────────────────────────────────────────── */
 .problem-grid {
@@ -387,9 +368,9 @@ body {
 /* ─── CLOSER ────────────────────────────────────────────────────────────────── */
 .closer-section {
   padding: 120px 24px;
-  background: #fff;
+  background: #0d0f1c;
   text-align: center;
-  border-top: 0.5px solid rgba(0,0,0,0.06);
+  border-top: none;
 }
 .closer-lines {
   display: flex; flex-direction: column; gap: 2px;
@@ -398,7 +379,7 @@ body {
 .closer-line {
   font-size: clamp(28px, 5vw, 52px);
   font-weight: 600; letter-spacing: -1.5px; line-height: 1.1;
-  color: #c4c4c4;
+  color: #fff;
   opacity: 0; transform: translateY(16px);
   transition: opacity 0.5s ease, transform 0.5s ease;
 }
@@ -407,59 +388,13 @@ body {
 .closer-line:nth-child(3) { transition-delay: 0.16s; }
 .closer-sub {
   font-size: clamp(15px, 2vw, 18px);
-  color: rgba(0,0,0,0.38); line-height: 1.65;
+  color: rgba(255,255,255,0.55); line-height: 1.65;
   max-width: 380px; margin: 0 auto;
   opacity: 0; transform: translateY(10px);
   transition: opacity 0.5s ease 0.28s, transform 0.5s ease 0.28s;
 }
 .closer-sub.revealed { opacity: 1; transform: none; }
 
-/* ─── FOOTER / WAITLIST ──────────────────────────────────────────────────────── */
-.footer-section {
-  padding: 100px 24px 80px;
-  background: #fff;
-  text-align: center;
-  border-top: 0.5px solid rgba(0,0,0,0.06);
-  display: flex; flex-direction: column;
-  align-items: center; gap: 20px;
-}
-.footer-eyebrow {
-  font-size: 11px; font-weight: 500; letter-spacing: 0.4px;
-  text-transform: uppercase; color: rgba(0,0,0,0.28);
-}
-.footer-headline {
-  font-size: clamp(22px, 3.5vw, 36px);
-  font-weight: 600; letter-spacing: -0.8px; color: #1a1a1a;
-  max-width: 480px; line-height: 1.2;
-}
-.footer-sub {
-  font-size: 15px; color: rgba(0,0,0,0.38); max-width: 360px; line-height: 1.6;
-}
-.waitlist-form {
-  display: flex; align-items: center; gap: 10px;
-  margin-top: 8px; flex-wrap: wrap; justify-content: center;
-}
-.waitlist-input {
-  font-family: inherit; font-size: 14px; color: #1a1a1a;
-  background: #fff; border: 0.5px solid rgba(0,0,0,0.18);
-  border-radius: 30px; padding: 13px 20px; width: 260px;
-  outline: none; transition: border-color 0.15s;
-  -webkit-appearance: none;
-}
-.waitlist-input:focus { border-color: rgba(0,0,0,0.4); }
-.waitlist-input::placeholder { color: rgba(0,0,0,0.3); }
-.btn-blue {
-  background: #007aff; color: #fff; border: none;
-  font-family: inherit; font-size: 14px; font-weight: 600;
-  padding: 13px 28px; border-radius: 30px; cursor: pointer;
-  transition: background 0.15s, transform 0.1s; letter-spacing: -0.2px;
-  white-space: nowrap;
-}
-.btn-blue:hover { background: #0066d6; }
-.btn-blue:active { transform: scale(0.97); }
-.footer-note {
-  font-size: 11px; color: rgba(0,0,0,0.22);
-}
 
 /* ─── INTERSECTION OBSERVER HELPER ──────────────────────────────────────────── */
 .reveal { opacity: 0; transform: translateY(16px); transition: opacity 0.55s ease, transform 0.55s ease; }
