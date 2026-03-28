@@ -13,7 +13,8 @@ export function getDb(): Database.Database {
   _db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, phone TEXT UNIQUE NOT NULL, chat_id TEXT,
-  name TEXT, active INTEGER DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')));
+  name TEXT, profile TEXT, onboard_stage TEXT DEFAULT 'new',
+  active INTEGER DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY, user_id TEXT, chat_id TEXT NOT NULL, sender TEXT NOT NULL, content TEXT,
   timestamp TEXT NOT NULL DEFAULT (datetime('now')),
@@ -45,7 +46,7 @@ const uid = () => randomUUID();
 
 // --- User management ---
 
-export function getActiveUsers(): { id: string; phone: string; chat_id: string; name: string }[] {
+export function getActiveUsers(): any[] {
   return getDb().prepare(`SELECT * FROM users WHERE active=1`).all() as any[];
 }
 
@@ -71,6 +72,16 @@ export function registerUser(phone: string, chatId: string, name?: string): stri
   const user = getUserByPhone(phone);
   console.log(`[db] registered user: ${phone} → ${user?.id}`);
   return user?.id ?? id;
+}
+
+export function updateUser(phone: string, updates: { name?: string; profile?: string; onboard_stage?: string }): void {
+  const parts: string[] = [];
+  const params: any = { phone };
+  if (updates.name !== undefined) { parts.push("name=@name"); params.name = updates.name; }
+  if (updates.profile !== undefined) { parts.push("profile=@profile"); params.profile = updates.profile; }
+  if (updates.onboard_stage !== undefined) { parts.push("onboard_stage=@onboard_stage"); params.onboard_stage = updates.onboard_stage; }
+  if (!parts.length) return;
+  getDb().prepare(`UPDATE users SET ${parts.join(",")} WHERE phone=@phone`).run(params);
 }
 
 // --- Scoped queries (all take userId) ---

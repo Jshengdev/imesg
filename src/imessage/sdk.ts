@@ -51,9 +51,15 @@ export async function sendText(to: string, text: string): Promise<void> {
   console.log(`[sdk] sendText → ${to}: ${text.slice(0, 80)}`);
   try {
     await getSDK().send(to, text);
-    console.log(`[sdk] sendText success`);
   } catch (e) {
     console.error('[sdk] sendText failed:', e);
+  }
+}
+
+export async function sendBubbles(to: string, bubbles: string[]): Promise<void> {
+  for (let i = 0; i < bubbles.length; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 600 + Math.random() * 600));
+    await sendText(to, bubbles[i]);
   }
 }
 
@@ -61,7 +67,6 @@ export async function sendAudio(to: string, audioPath: string, caption?: string)
   console.log(`[sdk] sendAudio → ${to}: ${audioPath}`);
   try {
     await getSDK().send(to, { files: [audioPath], text: caption });
-    console.log(`[sdk] sendAudio success`);
   } catch (e) {
     console.error('[sdk] sendAudio failed:', e);
   }

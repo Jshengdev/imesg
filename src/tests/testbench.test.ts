@@ -90,15 +90,20 @@ describe("Test Bench", () => {
     });
   });
 
-  describe("9. Intent Classification", () => {
-    test("should classify intents correctly", async () => {
-      const { classifyIntent } = await import("../agent/handler");
-      expect(classifyIntent("what should I focus on")).toBe("task");
-      expect(classifyIntent("check my email")).toBe("email");
-      expect(classifyIntent("what meetings do I have")).toBe("schedule");
-      expect(classifyIntent("draft a reply to Sarah")).toBe("draft");
-      expect(classifyIntent("hey whats up")).toBe("general");
-      console.log("INTENTS OK: all 5 classified correctly");
+  describe("9. Tool Definitions", () => {
+    test("should have valid tool definitions", async () => {
+      const { TOOL_DEFS } = await import("../agent/tools");
+      expect(Array.isArray(TOOL_DEFS)).toBe(true);
+      expect(TOOL_DEFS.length).toBe(7);
+      const names = TOOL_DEFS.map(t => t.function.name);
+      expect(names).toContain("get_calendar");
+      expect(names).toContain("get_emails");
+      expect(names).toContain("get_tasks");
+      expect(names).toContain("get_person");
+      expect(names).toContain("save_email_draft");
+      expect(names).toContain("get_cross_insights");
+      expect(names).toContain("get_conversation");
+      console.log("TOOLS OK:", names.join(", "));
     });
   });
 });

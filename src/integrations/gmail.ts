@@ -1,4 +1,4 @@
-import { executeWithFallback } from "./composio.js";
+import { executeWithFallback, getUserEntity, isMockMode } from "./composio.js";
 import { generateJSON } from "../minimax/llm";
 
 export interface EmailSummary {
@@ -85,6 +85,40 @@ given these emails, return JSON:
 
 be specific. use sender names and subjects. distinguish between "needs reply" vs "FYI" vs "marketing noise".
 if nothing needs attention, say so.`;
+
+// --- Save Email Draft via Composio ---
+
+export async function saveEmailDraft(
+  to: string,
+  subject: string,
+  body: string,
+  phone?: string,
+): Promise<{ success: boolean; message: string }> {
+  if (isMockMode()) return { success: false, message: "composio offline — can't save draft" };
+
+  const strategies = [
+    { actionName: "GMAIL_CREATE_DRAFT", params: { to, subject, body, userId: "me" } },
+    { actionName: "GMAIL_DRAFTS_CREATE", params: { to, subject, body } },
+    { actionName: "GMAIL_CREATE_DRAFT", params: { message: { to, subject, body } } },
+  ];
+
+  try {
+    const entity = phone ? await getUserEntity(phone) : null;
+    for (const s of strategies) {
+      try {
+        const result = entity
+          ? await entity.execute(s)
+          : await executeWithFallback([s], ["id", "draft", "message"], "gmail-draft", phone);
+        if (result) return { success: true, message: `draft saved — "${subject}" to ${to}` };
+      } catch (err) {
+        console.warn(`[gmail] ${s.actionName} failed:`, (err as Error).message);
+      }
+    }
+    return { success: false, message: "couldn't save draft — all strategies failed" };
+  } catch (err) {
+    return { success: false, message: `draft failed: ${(err as Error).message}` };
+  }
+}
 
 export async function analyzeGmail(phone?: string): Promise<GmailAnalysis> {
   const emails = await pullUnreadEmails(20, phone);
