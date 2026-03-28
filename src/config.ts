@@ -30,6 +30,8 @@ function loadConfig() {
     CALENDAR_POLL_MS: 5 * 60 * 1000,
     EMAIL_POLL_MS: 10 * 60 * 1000,
     MESSAGE_BATCH_MS: 30 * 1000,
+    LISTENER_PORT: num("LISTENER_PORT", 3456),
+    LISTENER_SECRET: process.env.LISTENER_SECRET ?? "nudge-demo-2026",
   };
 }
 

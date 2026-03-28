@@ -1,7 +1,7 @@
 import { generate, generateJSON, generateWithTools } from "../minimax/llm";
 import { analyzeImage } from "../minimax/vision";
 import { sendText, sendBubbles, type NormalizedMessage } from "../imessage/sdk";
-import { logAgent, resetDatabase, registerUser, getUserByPhone, getActiveUsers, updateUser, getTaskQueue, getTasksWithDetails, completeTaskByDescription, getDependentTasks, storeMessage } from "../memory/db";
+import { logAgent, resetDatabase, registerUser, getUserByPhone, getActiveUsers, updateUser, getTaskQueue, getTasksWithDetails, completeTaskByDescription, storeMessage } from "../memory/db";
 import { checkUserConnected, getOAuthLinks } from "../integrations/composio";
 import { SYSTEM_PROMPT, POST_HISTORY_ENFORCEMENT, validateResponse, validateDraft, getTemporalVoice } from "./personality";
 import { TOOL_DEFS, createToolExecutor } from "./tools";
@@ -9,7 +9,7 @@ import { splitIntoBubbles } from "../imessage/bubble-split";
 import { MessageBatcher } from "../imessage/batcher";
 import { analyzeCalendar } from "../integrations/calendar";
 import { analyzeGmail } from "../integrations/gmail";
-import { setDemoMode, isDemoMode, setVirtualTime, nowDate, now } from "../demo";
+import { setDemoMode, isDemoMode, setVirtualTime, now } from "../demo";
 import { evaluate } from "./proactive/decision-engine";
 import { rankTasks, formatRankedPlan } from "./ranking";
 import { getCachedInsights } from "./crossref";
@@ -196,6 +196,14 @@ async function handleOnboarding(msg: NormalizedMessage): Promise<boolean> {
   return false;
 }
 
+// --- Helpers ---
+
+function buildSystem(context: string): string {
+  return SYSTEM_PROMPT.replace("{context}", context)
+    + `\ntone: ${getTemporalVoice()}`
+    + `\n\n${POST_HISTORY_ENFORCEMENT}`;
+}
+
 // --- Tool guidance ---
 
 const TOOL_GUIDANCE = `you have tools. use them to look things up before responding — don't guess.
@@ -235,8 +243,10 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
   const user = getUserByPhone(phone);
   const userId = user?.id;
 
+  const text = msg.text?.trim() || "";
+
   // /reset
-  if (/^\/?reset$/i.test(msg.text?.trim() || "")) {
+  if (/^\/?reset$/i.test(text)) {
     onboardConvo.delete(phone);
     pendingOAuth.delete(phone);
     resetDatabase();
@@ -245,8 +255,6 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
     await sendText(replyTo, "text me to start over");
     return;
   }
-
-  const text = msg.text?.trim() || "";
 
   // /demo — enable demo mode, pre-cache data
   if (/^\/?demo$/i.test(text)) {
@@ -275,16 +283,13 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
   if (/^\/?important$/i.test(text)) {
     const [cal, gmail] = await Promise.all([analyzeCalendar(phone), analyzeGmail(phone)]);
     const tasks = getTaskQueue(userId);
-    const crossInsights = getCachedInsights();
-    const prompt = `housekeeping check. compare current tasks against latest email and calendar. flag contradictions, new deadlines, or anything pressing.\n\ntasks: ${tasks.slice(0, 10).map((t: any) => t.description).join("; ")}\nemail: ${gmail.insights}\ncalendar: ${cal.insights}\ncross-ref: ${crossInsights}`;
-    const system = SYSTEM_PROMPT.replace("{context}", "") + `\ntone: ${getTemporalVoice()}` + `\n\n${POST_HISTORY_ENFORCEMENT}`;
+    const prompt = `housekeeping check. compare current tasks against latest email and calendar. flag contradictions, new deadlines, or anything pressing.\n\ntasks: ${tasks.slice(0, 10).map((t: any) => t.description).join("; ")}\nemail: ${gmail.insights}\ncalendar: ${cal.insights}\ncross-ref: ${getCachedInsights()}`;
+    const system = buildSystem("");
     const raw = await generate(system, prompt);
     const response = validateResponse(raw);
-    if (response.length > 5) {
-      await sendBubbles(replyTo, splitIntoBubbles(response));
-    } else {
-      await sendText(replyTo, "checked everything. nothing new rn");
-    }
+    await (response.length > 5
+      ? sendBubbles(replyTo, splitIntoBubbles(response))
+      : sendText(replyTo, "checked everything. nothing new rn"));
     logAgent({ direction: "out", content: response }, userId);
     return;
   }
@@ -295,7 +300,7 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
     const cal = await analyzeCalendar(phone);
     const ranked = rankTasks(tasks, cal.freeBlocks);
     const plan = formatRankedPlan(ranked, cal.freeBlocks);
-    const system = SYSTEM_PROMPT.replace("{context}", `current priority plan:\n${plan}`) + `\ntone: ${getTemporalVoice()}` + `\n\n${POST_HISTORY_ENFORCEMENT}`;
+    const system = buildSystem(`current priority plan:\n${plan}`);
     const raw = await generate(system, "give the priority breakdown. be specific about times, order, and why");
     const response = validateResponse(raw);
     await sendBubbles(replyTo, splitIntoBubbles(response));
@@ -339,12 +344,10 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
   logAgent({ direction: "in", content: msg.text }, userId);
 
   try {
-    let userContext = TOOL_GUIDANCE;
-    if (user?.name) userContext = `you're talking to ${user.name}. ${user.profile || ""}\n\n` + userContext;
-
-    const system = SYSTEM_PROMPT.replace("{context}", userContext)
-      + `\ntone: ${getTemporalVoice()}`
-      + `\n\n${POST_HISTORY_ENFORCEMENT}`;
+    const userContext = user?.name
+      ? `you're talking to ${user.name}. ${user.profile || ""}\n\n${TOOL_GUIDANCE}`
+      : TOOL_GUIDANCE;
+    const system = buildSystem(userContext);
 
     let userContent = msg.text;
     const imageAtt = msg.attachments.find(a => /\.(jpe?g|png|gif|webp)$/i.test(a.path));

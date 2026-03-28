@@ -63,28 +63,6 @@ export async function sendBubbles(to: string, bubbles: string[]): Promise<void> 
   }
 }
 
-export async function sendAudio(to: string, audioPath: string, caption?: string): Promise<void> {
-  console.log(`[sdk] sendAudio → ${to}: ${audioPath}`);
-  try {
-    await getSDK().send(to, { files: [audioPath], text: caption });
-  } catch (e) {
-    console.error('[sdk] sendAudio failed:', e);
-  }
-}
-
-export async function sendWithVoice(to: string, text: string, tts: (t: string) => Promise<string>): Promise<string | null> {
-  let audioPath: string | null = null;
-  try {
-    audioPath = await tts(text);
-    console.log(`[sdk] TTS generated: ${audioPath}`);
-  } catch (e) {
-    console.warn("[sdk] TTS failed, falling back to text:", e);
-  }
-  if (audioPath) await sendAudio(to, audioPath, text);
-  else await sendText(to, text);
-  return audioPath;
-}
-
 export async function startListening(onMessage: (msg: NormalizedMessage) => Promise<void> | void): Promise<void> {
   const s = getSDK();
   console.log('[sdk] starting watcher...');

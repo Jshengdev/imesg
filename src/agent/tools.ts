@@ -224,24 +224,19 @@ export function createToolExecutor(phone?: string) {
 
         if (args.date) {
           const dateStr = args.date as string;
-          if (dateStr === "tomorrow") {
-            startTime.setDate(startTime.getDate() + 1);
-          } else {
-            startTime = new Date(dateStr);
-          }
+          startTime = dateStr === "tomorrow"
+            ? (startTime.setDate(startTime.getDate() + 1), startTime)
+            : new Date(dateStr);
         }
 
         if (args.hour !== undefined) {
           startTime.setHours(args.hour as number, 0, 0, 0);
-        }
-
-        if (args.hour === undefined) {
-          const result = await findAndBlockTime(title, durationMin, startTime, phone);
-          return result.message;
-        } else {
           const result = await blockTime(title, startTime, durationMin, phone);
           return result.message;
         }
+
+        const result = await findAndBlockTime(title, durationMin, startTime, phone);
+        return result.message;
       }
 
       case "get_cross_insights":

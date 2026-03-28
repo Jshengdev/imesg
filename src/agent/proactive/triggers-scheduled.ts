@@ -4,8 +4,7 @@ import { pullTodayEvents, findFreeBlocks } from "../../integrations/calendar";
 import { pullUnreadEmails } from "../../integrations/gmail";
 import { sendProactive } from "./engine";
 import { nowDate } from "../../demo";
-
-type UserCtx = { userId: string; chatId: string; phone: string };
+import { type UserCtx, dedupAdd } from "./types";
 
 export async function morningBriefing(u: UserCtx): Promise<void> {
   try {
@@ -47,9 +46,7 @@ export async function scheduleOptimizer(u: UserCtx): Promise<void> {
 
     const top = tasks[0];
     const key = `${u.userId}::${nextBlock.start.toISOString()}::${top.id}`;
-    if (sentBlockTaskKeys.has(key)) return;
-    if (sentBlockTaskKeys.size >= 200) sentBlockTaskKeys.clear();
-    sentBlockTaskKeys.add(key);
+    if (dedupAdd(sentBlockTaskKeys, key)) return;
 
     const blockTime = nextBlock.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
     await sendProactive("schedule_optimizer",
@@ -72,9 +69,7 @@ export async function emailEscalation(u: UserCtx): Promise<void> {
     for (const [sender, subjects] of bySender) {
       if (subjects.length < 3) continue;
       const key = `${u.userId}::escalation::${sender}`;
-      if (sentEscalationKeys.has(key)) continue;
-      if (sentEscalationKeys.size >= 200) sentEscalationKeys.clear();
-      sentEscalationKeys.add(key);
+      if (dedupAdd(sentEscalationKeys, key)) continue;
       await sendProactive("email_escalation",
         `${sender} has ${subjects.length} unread emails: ${subjects.slice(0, 3).join("; ")}. this might need attention.`,
         u.userId, u.chatId, u.phone);

@@ -1,9 +1,7 @@
+import { config } from "./config";
 import { storeMessage, getUserByPhone } from "./memory/db";
 import { runExtractionOnce } from "./listener/extractor";
 import { evaluate } from "./agent/proactive/decision-engine";
-
-const PORT = parseInt(process.env.LISTENER_PORT || "3456");
-const SECRET = process.env.LISTENER_SECRET || "nudge-demo-2026";
 
 interface IncomingMessage {
   id: string;
@@ -27,7 +25,6 @@ async function handleMessages(payload: ListenerPayload): Promise<{ stored: numbe
   const userId = user?.id;
   const chatId = user?.chat_id;
 
-  let stored = 0;
   for (const msg of messages) {
     storeMessage({
       id: msg.id,
@@ -37,14 +34,11 @@ async function handleMessages(payload: ListenerPayload): Promise<{ stored: numbe
       content: msg.text,
       direction: "in",
     });
-    stored++;
     console.log(`[server] stored from ${msg.sender}: ${msg.text.slice(0, 60)}`);
   }
 
-  // Run extraction immediately on the new messages
   const extracted = await runExtractionOnce(userId);
 
-  // If tasks were extracted, evaluate whether to proactively message the user
   if (extracted > 0 && userId && chatId) {
     const senders = [...new Set(messages.map(m => m.sender))].join(", ");
     const result = await evaluate(
@@ -57,28 +51,25 @@ async function handleMessages(payload: ListenerPayload): Promise<{ stored: numbe
     console.log(`[server] decision engine: ${result.action} (${result.reason})`);
   }
 
-  return { stored, extracted };
+  return { stored: messages.length, extracted };
 }
 
 export function startServer(): void {
-  const server = Bun.serve({
-    port: PORT,
+  Bun.serve({
+    port: config.LISTENER_PORT,
     async fetch(req) {
-      // Health check
-      if (req.method === "GET" && new URL(req.url).pathname === "/health") {
+      const { pathname } = new URL(req.url);
+
+      if (req.method === "GET" && pathname === "/health") {
         return new Response("ok");
       }
 
-      // Message ingestion endpoint
-      if (req.method === "POST" && new URL(req.url).pathname === "/api/messages") {
-        // Auth check
-        const auth = req.headers.get("Authorization");
-        if (auth !== `Bearer ${SECRET}`) {
+      if (req.method === "POST" && pathname === "/api/messages") {
+        if (req.headers.get("Authorization") !== `Bearer ${config.LISTENER_SECRET}`) {
           return new Response("unauthorized", { status: 401 });
         }
-
         try {
-          const payload = (await req.json()) as ListenerPayload;
+          const payload = await req.json() as ListenerPayload;
           const result = await handleMessages(payload);
           return Response.json({ ok: true, ...result });
         } catch (err) {
@@ -91,5 +82,5 @@ export function startServer(): void {
     },
   });
 
-  console.log(`[server] listening on port ${PORT} — ready for listener data`);
+  console.log(`[server] listening on port ${config.LISTENER_PORT}`);
 }

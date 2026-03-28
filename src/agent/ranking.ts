@@ -68,13 +68,14 @@ export function rankTasks(tasks: any[], freeBlocks: FreeBlock[], currentTime?: D
   const now = currentTime || nowDate();
 
   const ranked: RankedTask[] = tasks.map(t => {
-    const blocked = dependencyClearScore(t.depends_on, tasks) < 0;
     const estMin = t.estimated_minutes || 30;
+    const depScore = dependencyClearScore(t.depends_on, tasks);
+    const calScore = calendarFitScore(estMin, freeBlocks, now);
 
     const score = (t.urgency || 3) * 3
       + deadlineScore(t.deadline, t.deadline_confidence, now) * 2
-      + calendarFitScore(estMin, freeBlocks, now) * 1.5
-      + dependencyClearScore(t.depends_on, tasks) * 1;
+      + calScore * 1.5
+      + depScore * 1;
 
     return {
       id: t.id,
@@ -87,8 +88,8 @@ export function rankTasks(tasks: any[], freeBlocks: FreeBlock[], currentTime?: D
       deadline_confidence: t.deadline_confidence || "inferred",
       assigned_by: t.assigned_by || null,
       depends_on: t.depends_on || null,
-      blocked,
-      fits_next_block: calendarFitScore(estMin, freeBlocks, now) >= 5,
+      blocked: depScore < 0,
+      fits_next_block: calScore >= 5,
       urgency: t.urgency || 3,
     };
   });

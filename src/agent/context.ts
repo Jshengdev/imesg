@@ -7,33 +7,29 @@ import { nowDate } from "../demo";
 // --- Cross-referencing: connect people across sources ---
 
 function crossReference(events: CalendarEvent[], emails: EmailSummary[], tasks: any[]): string {
-  const norm = normalizeNameWords;
-
   const personSources = new Map<string, { events: string[]; emails: string[]; tasks: string[] }>();
   const touch = (name: string) => {
     if (!personSources.has(name)) personSources.set(name, { events: [], emails: [], tasks: [] });
     return personSources.get(name)!;
   };
 
-  for (const ev of events) {
-    for (const att of ev.attendees) { for (const w of norm(att)) touch(w).events.push(ev.title); }
-  }
-  for (const em of emails) {
-    for (const w of norm(em.from)) touch(w).emails.push(em.subject);
-  }
-  for (const t of tasks) {
-    if (t.assigned_by) { for (const w of norm(t.assigned_by)) touch(w).tasks.push(t.description); }
-  }
+  for (const ev of events)
+    for (const att of ev.attendees)
+      for (const w of normalizeNameWords(att)) touch(w).events.push(ev.title);
+  for (const em of emails)
+    for (const w of normalizeNameWords(em.from)) touch(w).emails.push(em.subject);
+  for (const t of tasks)
+    if (t.assigned_by)
+      for (const w of normalizeNameWords(t.assigned_by)) touch(w).tasks.push(t.description);
 
   const crossings: string[] = [];
   for (const [person, src] of personSources) {
-    const count = (src.events.length > 0 ? 1 : 0) + (src.emails.length > 0 ? 1 : 0) + (src.tasks.length > 0 ? 1 : 0);
-    if (count < 2) continue;
-    const parts: string[] = [];
-    if (src.events.length) parts.push(`meeting "${src.events[0]}"`);
-    if (src.emails.length) parts.push(`email re: "${src.emails[0]}"`);
-    if (src.tasks.length) parts.push(`task: "${src.tasks[0]}"`);
-    crossings.push(`- "${person}" appears in ${parts.join(" + ")}`);
+    const parts = [
+      src.events.length && `meeting "${src.events[0]}"`,
+      src.emails.length && `email re: "${src.emails[0]}"`,
+      src.tasks.length && `task: "${src.tasks[0]}"`,
+    ].filter(Boolean) as string[];
+    if (parts.length >= 2) crossings.push(`- "${person}" appears in ${parts.join(" + ")}`);
   }
 
   return crossings.length ? `## cross-source connections\n${crossings.join("\n")}` : "";

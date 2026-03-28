@@ -41,11 +41,11 @@ async function runCrossRef(phone?: string): Promise<void> {
       return;
     }
 
-    const dataBlock = [
-      cal.events.length ? `calendar:\n${cal.events.map(e => `- ${fmtTime(e.start)}: ${e.title}${e.attendees.length ? ` (with ${e.attendees.slice(0, 3).join(", ")})` : ""}`).join("\n")}` : "",
-      gmail.emails.length ? `emails:\n${gmail.emails.slice(0, 10).map(e => `- from ${e.from}: ${e.subject}`).join("\n")}` : "",
-      tasks.length ? `tasks:\n${tasks.slice(0, 10).map(t => `- ${t.description}${t.assigned_by ? ` (from ${t.assigned_by})` : ""}${t.deadline ? ` [due: ${t.deadline}]` : ""}`).join("\n")}` : "",
-    ].filter(Boolean).join("\n\n");
+    const sections: string[] = [];
+    if (cal.events.length) sections.push(`calendar:\n${cal.events.map(e => `- ${fmtTime(e.start)}: ${e.title}${e.attendees.length ? ` (with ${e.attendees.slice(0, 3).join(", ")})` : ""}`).join("\n")}`);
+    if (gmail.emails.length) sections.push(`emails:\n${gmail.emails.slice(0, 10).map(e => `- from ${e.from}: ${e.subject}`).join("\n")}`);
+    if (tasks.length) sections.push(`tasks:\n${tasks.slice(0, 10).map((t: any) => `- ${t.description}${t.assigned_by ? ` (from ${t.assigned_by})` : ""}${t.deadline ? ` [due: ${t.deadline}]` : ""}`).join("\n")}`);
+    const dataBlock = sections.join("\n\n");
 
     const result = await generate(CROSSREF_PROMPT, dataBlock);
     if (result.length > 10) cachedInsights = result;

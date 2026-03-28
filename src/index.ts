@@ -22,19 +22,16 @@ try {
     const route = routeMessage(msg);
     if (route === "ignore") return;
 
-    // Auto-register user on first message
     const phone = msg.sender || msg.chatId;
     let user = getUserByPhone(phone);
     if (!user) {
       registerUser(phone, msg.chatId);
       user = getUserByPhone(phone);
     }
-    const userId = user?.id ?? undefined;
 
-    // Store with userId
     storeMessage({
       id: msg.id,
-      user_id: userId,
+      user_id: user?.id,
       chat_id: msg.chatId,
       sender: msg.sender,
       content: msg.text,

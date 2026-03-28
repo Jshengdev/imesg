@@ -1,5 +1,5 @@
 import { Composio } from "composio-core";
-import { config } from "../config.js";
+import { config } from "../config";
 
 let composio: Composio | null = null;
 let initDone = false;

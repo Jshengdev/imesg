@@ -5,8 +5,7 @@ import { pullUnreadEmails } from "../../integrations/gmail";
 import { sendProactive } from "./engine";
 import { normalizeNameWords } from "../../utils";
 import { now } from "../../demo";
-
-type UserCtx = { userId: string; chatId: string; phone: string };
+import { type UserCtx, dedupAdd } from "./types";
 
 const sentEventIds = new Set<string>();
 
@@ -18,9 +17,7 @@ export async function preMeetingPrep(u: UserCtx): Promise<void> {
     for (const ev of events) {
       const ms = ev.start.getTime() - nowMs;
       const evKey = `${u.userId}::${ev.title}::${ev.start.toISOString()}`;
-      if (ms > 0 && ms <= threshold && !sentEventIds.has(evKey)) {
-        if (sentEventIds.size >= 500) sentEventIds.clear();
-        sentEventIds.add(evKey);
+      if (ms > 0 && ms <= threshold && !dedupAdd(sentEventIds, evKey, 500)) {
         await sendProactive("pre_meeting", `prep me for my upcoming meeting: "${ev.title}" starting in ${Math.round(ms / 60000)} min. attendees: ${ev.attendees.join(", ") || "none listed"}. what should i know?`, u.userId, u.chatId, u.phone);
       }
     }
@@ -38,9 +35,7 @@ export async function followUpReminder(u: UserCtx): Promise<void> {
       if (elapsed < 30 * 60 * 1000 || elapsed > 3 * 60 * 60 * 1000) continue;
       if (!ev.attendees.length) continue;
       const key = `${u.userId}::${ev.title}::${ev.end.toISOString()}`;
-      if (sentFollowUpKeys.has(key)) continue;
-      if (sentFollowUpKeys.size >= 200) sentFollowUpKeys.clear();
-      sentFollowUpKeys.add(key);
+      if (dedupAdd(sentFollowUpKeys, key)) continue;
       const ago = Math.round(elapsed / 60000);
       await sendProactive("follow_up",
         `meeting "${ev.title}" ended ${ago} min ago (with ${ev.attendees.slice(0, 3).join(", ")}). any follow-ups needed?`,
@@ -73,9 +68,7 @@ export async function crossSourcePairing(u: UserCtx): Promise<void> {
           const taskDesc = taskNames.get(w);
           if (!emailSubj && !taskDesc) continue;
           const key = `${u.userId}::pairing::${w}::${ev.title}`;
-          if (sentPairingKeys.has(key)) continue;
-          if (sentPairingKeys.size >= 200) sentPairingKeys.clear();
-          sentPairingKeys.add(key);
+          if (dedupAdd(sentPairingKeys, key)) continue;
           const sources = [`meeting "${ev.title}"`];
           if (emailSubj) sources.push(`email re: "${emailSubj}"`);
           if (taskDesc) sources.push(`task: "${taskDesc}"`);

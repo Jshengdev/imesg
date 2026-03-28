@@ -1,6 +1,7 @@
-import { executeWithFallback, getUserEntity, isMockMode } from "./composio.js";
+import { executeWithFallback, getUserEntity, isMockMode } from "./composio";
 import { generateJSON } from "../minimax/llm";
 import { nowDate } from "../demo";
+import { fmtTime } from "../utils";
 
 export interface CalendarEvent {
   title: string;
@@ -115,7 +116,6 @@ export async function analyzeCalendar(phone?: string): Promise<CalendarAnalysis>
   }
 
   // Build schedule text for LLM
-  const fmtTime = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const scheduleText = events
     .sort((a, b) => a.start.getTime() - b.start.getTime())
     .map(e => `- ${fmtTime(e.start)}-${fmtTime(e.end)}: ${e.title} (${e.durationMin}min)${e.attendees.length ? ` with ${e.attendees.slice(0, 3).join(", ")}` : ""}`)
@@ -160,7 +160,6 @@ export async function blockTime(
   if (isMockMode()) return { success: false, message: "composio offline — can't block time" };
 
   const endTime = new Date(startTime.getTime() + durationMin * 60 * 1000);
-  const fmtTime = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   const dateStr = startTime.toISOString().split("T")[0];
 
   const strategies = [

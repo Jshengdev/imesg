@@ -50,6 +50,30 @@ interface ExtractionResult {
   people: { name: string; context?: string }[];
 }
 
+function formatTasksForStorage(tasks: ExtractionResult["tasks"]) {
+  return tasks.map((t) => ({
+    source: "imessage",
+    description: t.description,
+    assigned_by: t.assigned_by,
+    deadline: t.deadline,
+    urgency: t.urgency,
+    estimated_minutes: t.estimated_minutes,
+    effort_level: t.effort_level,
+    environment: t.environment,
+    deadline_source: t.deadline_source,
+    deadline_confidence: t.deadline_confidence,
+  }));
+}
+
+function storePeopleFromResult(people: ExtractionResult["people"]): void {
+  if (!people.length) return;
+  const db = getDb();
+  const stmt = db.prepare(`INSERT OR IGNORE INTO people (id, name, context_notes) VALUES (@id, @name, @context)`);
+  db.transaction((rows: typeof people) => {
+    for (const p of rows) stmt.run({ id: p.name.toLowerCase().replace(/\s+/g, "-"), name: p.name, context: p.context ?? null });
+  })(people);
+}
+
 function regexPeople(text: string): { name: string; context: string }[] {
   const seen = new Set<string>(), out: { name: string; context: string }[] = [];
   for (const re of PERSON_RE) {
@@ -85,25 +109,8 @@ export function startExtractionLoop(): void {
       const msgs = getUnprocessedMessages(20);
       if (!msgs.length) return;
       const result = await extractFromMessages(msgs);
-      if (result.tasks.length) storeTasks(result.tasks.map((t) => ({
-        source: "imessage",
-        description: t.description,
-        assigned_by: t.assigned_by,
-        deadline: t.deadline,
-        urgency: t.urgency,
-        estimated_minutes: t.estimated_minutes,
-        effort_level: t.effort_level,
-        environment: t.environment,
-        deadline_source: t.deadline_source,
-        deadline_confidence: t.deadline_confidence,
-      })));
-      if (result.people.length) {
-        const db = getDb();
-        const stmt = db.prepare(`INSERT OR IGNORE INTO people (id, name, context_notes) VALUES (@id, @name, @context)`);
-        db.transaction((people: typeof result.people) => {
-          for (const p of people) stmt.run({ id: p.name.toLowerCase().replace(/\s+/g, "-"), name: p.name, context: p.context ?? null });
-        })(result.people);
-      }
+      if (result.tasks.length) storeTasks(formatTasksForStorage(result.tasks));
+      storePeopleFromResult(result.people);
       markProcessed(msgs.map((m: any) => m.id));
       console.log(`[extractor] processed ${msgs.length} msgs → ${result.tasks.length} tasks, ${result.people.length} people`);
     } catch (err) { console.error("[extractor] loop error:", err instanceof Error ? err.message : err); }
@@ -114,25 +121,8 @@ export async function runExtractionOnce(userId?: string): Promise<number> {
   const msgs = getUnprocessedMessages(20, userId);
   if (!msgs.length) return 0;
   const result = await extractFromMessages(msgs);
-  if (result.tasks.length) storeTasks(result.tasks.map((t) => ({
-    source: "imessage",
-    description: t.description,
-    assigned_by: t.assigned_by,
-    deadline: t.deadline,
-    urgency: t.urgency,
-    estimated_minutes: t.estimated_minutes,
-    effort_level: t.effort_level,
-    environment: t.environment,
-    deadline_source: t.deadline_source,
-    deadline_confidence: t.deadline_confidence,
-  })), userId);
-  if (result.people.length) {
-    const db = getDb();
-    const stmt = db.prepare(`INSERT OR IGNORE INTO people (id, name, context_notes) VALUES (@id, @name, @context)`);
-    db.transaction((people: typeof result.people) => {
-      for (const p of people) stmt.run({ id: p.name.toLowerCase().replace(/\s+/g, "-"), name: p.name, context: p.context ?? null });
-    })(result.people);
-  }
+  if (result.tasks.length) storeTasks(formatTasksForStorage(result.tasks), userId);
+  storePeopleFromResult(result.people);
   markProcessed(msgs.map((m: any) => m.id));
   console.log(`[extractor] on-demand: ${msgs.length} msgs → ${result.tasks.length} tasks, ${result.people.length} people`);
   return result.tasks.length;

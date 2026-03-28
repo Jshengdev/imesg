@@ -165,25 +165,25 @@ export function logProactive(trigger_type: string, content_hash: string, userId?
 }
 
 export function countRecentProactive(minutes: number, userId?: string): number {
-  const q = userId
-    ? `SELECT COUNT(*) as cnt FROM proactive_log WHERE user_id=@userId AND sent_at > datetime('now', @offset)`
-    : `SELECT COUNT(*) as cnt FROM proactive_log WHERE sent_at > datetime('now', @offset)`;
-  const row = getDb().prepare(q).get({ userId, offset: `-${minutes} minutes` }) as any;
+  const offset = `-${minutes} minutes`;
+  const row = userId
+    ? getDb().prepare(`SELECT COUNT(*) as cnt FROM proactive_log WHERE user_id=@userId AND sent_at > datetime('now', @offset)`).get({ userId, offset }) as any
+    : getDb().prepare(`SELECT COUNT(*) as cnt FROM proactive_log WHERE sent_at > datetime('now', @offset)`).get({ offset }) as any;
   return row?.cnt ?? 0;
 }
 
 export function wasRecentlySent(hash: string, minutes: number, userId?: string): boolean {
-  const q = userId
-    ? `SELECT 1 FROM proactive_log WHERE content_hash=@hash AND user_id=@userId AND sent_at > datetime('now', @offset) LIMIT 1`
-    : `SELECT 1 FROM proactive_log WHERE content_hash=@hash AND sent_at > datetime('now', @offset) LIMIT 1`;
-  return !!getDb().prepare(q).get({ hash, userId, offset: `-${minutes} minutes` });
+  const offset = `-${minutes} minutes`;
+  return userId
+    ? !!getDb().prepare(`SELECT 1 FROM proactive_log WHERE content_hash=@hash AND user_id=@userId AND sent_at > datetime('now', @offset) LIMIT 1`).get({ hash, userId, offset })
+    : !!getDb().prepare(`SELECT 1 FROM proactive_log WHERE content_hash=@hash AND sent_at > datetime('now', @offset) LIMIT 1`).get({ hash, offset });
 }
 
 export function getRecentConversation(limit = 8, userId?: string): { direction: string; content: string; timestamp: string }[] {
-  const q = userId
-    ? `SELECT direction, content, timestamp FROM agent_log WHERE user_id=@userId AND content IS NOT NULL AND content != '' ORDER BY timestamp DESC LIMIT @limit`
-    : `SELECT direction, content, timestamp FROM agent_log WHERE content IS NOT NULL AND content != '' ORDER BY timestamp DESC LIMIT @limit`;
-  return getDb().prepare(q).all({ userId, limit }) as any[];
+  return (userId
+    ? getDb().prepare(`SELECT direction, content, timestamp FROM agent_log WHERE user_id=@userId AND content IS NOT NULL AND content != '' ORDER BY timestamp DESC LIMIT @limit`).all({ userId, limit })
+    : getDb().prepare(`SELECT direction, content, timestamp FROM agent_log WHERE content IS NOT NULL AND content != '' ORDER BY timestamp DESC LIMIT @limit`).all({ limit })
+  ) as any[];
 }
 
 export function getPersonDossier(name: string, userId?: string): { person: any | null; messages: any[]; tasks: any[] } {
@@ -237,16 +237,8 @@ export function completeTaskByDescription(description: string, userId?: string):
   return { found: false };
 }
 
-export function getTasksWithDetails(userId?: string): any[] {
-  if (userId) {
-    return getDb().prepare(
-      `SELECT * FROM tasks WHERE status='open' AND user_id=@userId ORDER BY urgency DESC, created_at ASC`
-    ).all({ userId });
-  }
-  return getDb().prepare(
-    `SELECT * FROM tasks WHERE status='open' ORDER BY urgency DESC, created_at ASC`
-  ).all();
-}
+// Alias — same query as getTaskQueue, kept for API compatibility
+export const getTasksWithDetails = getTaskQueue;
 
 export function getDependentTasks(taskId: string): any[] {
   return getDb().prepare(

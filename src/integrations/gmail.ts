@@ -1,4 +1,4 @@
-import { executeWithFallback, getUserEntity, isMockMode } from "./composio.js";
+import { executeWithFallback, getUserEntity, isMockMode } from "./composio";
 import { generateJSON } from "../minimax/llm";
 
 export interface EmailSummary {
