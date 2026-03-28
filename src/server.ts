@@ -1,3 +1,4 @@
+import http from "node:http";
 import { config } from "./config";
 import { storeMessage, getUserByPhone } from "./memory/db";
 import { runExtractionOnce } from "./listener/extractor";
@@ -54,33 +55,45 @@ async function handleMessages(payload: ListenerPayload): Promise<{ stored: numbe
   return { stored: messages.length, extracted };
 }
 
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    req.on("error", reject);
+  });
+}
+
 export function startServer(): void {
-  Bun.serve({
-    port: config.LISTENER_PORT,
-    async fetch(req) {
-      const { pathname } = new URL(req.url);
+  const server = http.createServer(async (req, res) => {
+    const pathname = req.url ?? "/";
 
-      if (req.method === "GET" && pathname === "/health") {
-        return new Response("ok");
+    if (req.method === "GET" && pathname === "/health") {
+      res.writeHead(200).end("ok");
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/messages") {
+      if (req.headers.authorization !== `Bearer ${config.LISTENER_SECRET}`) {
+        res.writeHead(401).end("unauthorized");
+        return;
       }
-
-      if (req.method === "POST" && pathname === "/api/messages") {
-        if (req.headers.get("Authorization") !== `Bearer ${config.LISTENER_SECRET}`) {
-          return new Response("unauthorized", { status: 401 });
-        }
-        try {
-          const payload = await req.json() as ListenerPayload;
-          const result = await handleMessages(payload);
-          return Response.json({ ok: true, ...result });
-        } catch (err) {
-          console.error("[server] error:", err);
-          return Response.json({ ok: false, error: (err as Error).message }, { status: 500 });
-        }
+      try {
+        const body = await readBody(req);
+        const payload = JSON.parse(body) as ListenerPayload;
+        const result = await handleMessages(payload);
+        res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, ...result }));
+      } catch (err) {
+        console.error("[server] error:", err);
+        res.writeHead(500, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: false, error: (err as Error).message }));
       }
+      return;
+    }
 
-      return new Response("not found", { status: 404 });
-    },
+    res.writeHead(404).end("not found");
   });
 
-  console.log(`[server] listening on port ${config.LISTENER_PORT}`);
+  server.listen(config.LISTENER_PORT, () => {
+    console.log(`[server] listening on port ${config.LISTENER_PORT}`);
+  });
 }

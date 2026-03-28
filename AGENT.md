@@ -1,686 +1,824 @@
-# Nudge — iMessage AI Assistant
+# Nudge — AGENT.md
 
-## Overview
+Reference document for AI coding assistants (Trae/Claude). Everything here reflects the current codebase exactly.
 
-Nudge is an AI-powered iMessage assistant that responds to text messages with context-aware replies using MiniMax M2.7 + Speech 2.8 TTS. It integrates with Gmail and Google Calendar via Composio to provide personalized, proactive assistance.
+---
 
-**Core Philosophy**: Not a helpful assistant — a sharp friend who happens to have access to your calendar, email, and tasks. Voice is lowercase, casual, and occasionally roast-y.
+## 1. Overview
 
-## Architecture
+**Nudge** is an iMessage AI assistant. It reads a user's Gmail and Google Calendar via Composio, extracts tasks from conversations, and responds as a casual friend — not a corporate assistant.
 
-### Message Flow
+**Core philosophy**: Synthesize 5 data points into 1 casual text. The gap between what you know and what you say is the mystery. Silence > noise. Roast > politeness.
+
+**Tech stack**:
+- Runtime: Node.js via `npx tsx` (NOT bun — `better-sqlite3` is a native module that doesn't work with bun)
+- LLM: MiniMax M2.7 via OpenAI-compatible SDK
+- iMessage: `@photon-ai/imessage-kit`
+- OAuth/integrations: Composio (Gmail + Google Calendar)
+- Database: SQLite via `better-sqlite3`
+- Language: TypeScript (ESM modules)
+
+**Start command**: `npm start` → runs `npx tsx src/index.ts`
+
+---
+
+## 2. Two-Mac Architecture
+
+Nudge supports a split-Mac setup for production use, though the agent Mac can also run standalone.
 
 ```
-Incoming iMessage
-  ↓
-[src/imessage/sdk.ts] - Normalize + deduplicate + debug log
-  ↓
-[src/imessage/router.ts] - isFromMe? ignore : agent
-  ↓
-[src/agent/handler.ts] - Onboarding check → Intent classify → Context assemble → LLM → Validate → Reply
-  ↓
-iMessage response (text + optional voice note)
+Listener Mac (user's Mac with iMessage)       Agent Mac (server)
+─────────────────────────────────────────     ────────────────────────────────────
+listener/index.ts                             src/server.ts
+  - @photon-ai/imessage-kit watcher              - Bun.serve on LISTENER_PORT (3456)
+  - Filters own messages + IGNORE_CHAT_IDS        - POST /api/messages
+  - Batches 3s before sending                     - Bearer token auth (LISTENER_SECRET)
+  - POST → AGENT_URL/api/messages                 - storeMessage() + runExtractionOnce()
+                                                  - evaluate() → decision engine
 ```
 
-### Background Systems
+**Env vars on Listener Mac**:
+- `AGENT_URL` — HTTP URL of agent Mac (e.g., `http://192.168.1.x:3456`)
+- `LISTENER_SECRET` — shared secret (default `nudge-demo-2026`)
+- `OWNER_PHONE` — owner's phone number (e.g., `+12134240682`)
+- `IGNORE_CHAT_IDS` — comma-separated chat/sender IDs to skip (agent's own chat)
 
-```
-[src/index.ts] - Boot sequence
-  ↓
-[src/listener/extractor.ts] - 30s loop: batch messages → M2.7 extracts tasks/people → SQLite
-  ↓
-[src/agent/proactive/] - 9 triggers (scheduled + event-driven)
-  ↓
-[src/agent/crossref.ts] - 5min loop: cross-reference calendar + email + tasks
-```
+**Standalone mode**: The agent Mac also runs `@photon-ai/imessage-kit` directly in `src/imessage/sdk.ts` — so a single Mac works without the listener bridge.
 
-## Directory Structure
+---
+
+## 3. Directory Structure
 
 ```
 imesg/
 ├── src/
-│   ├── index.ts                          # Boot sequence
-│   ├── config.ts                         # Environment configuration
+│   ├── index.ts                    # Boot sequence — wires all systems
+│   ├── config.ts                   # Env var loading + validation
+│   ├── demo.ts                     # Virtual time + demo mode state
+│   ├── server.ts                   # HTTP server for listener bridge (Bun.serve)
+│   ├── utils.ts                    # fmtTime(), normalizeNameWords()
 │   ├── agent/
-│   │   ├── handler.ts                    # Main message handler + onboarding
-│   │   ├── context.ts                   # Context assembly for LLM
-│   │   ├── personality.ts                # System prompt + voice validation
-│   │   ├── tools.ts                      # Tool definitions + executor
-│   │   ├── crossref.ts                  # Cross-source intelligence
+│   │   ├── handler.ts              # Main message handler, onboarding, all /commands
+│   │   ├── personality.ts          # SYSTEM_PROMPT, POST_HISTORY_ENFORCEMENT, validators
+│   │   ├── context.ts              # assembleContext() — intent-ordered context sections
+│   │   ├── tools.ts                # 9 tool defs (OpenAI format) + createToolExecutor()
+│   │   ├── ranking.ts              # rankTasks() scoring formula + formatRankedPlan()
+│   │   ├── crossref.ts             # 5-min loop: LLM cross-source intelligence cache
 │   │   └── proactive/
-│   │       ├── index.ts                 # Proactive engine orchestrator
-│   │       ├── engine.ts                # Proactive send logic
-│   │       ├── triggers-scheduled.ts    # Time-based triggers (6)
-│   │       └── triggers-event.ts        # Event-based triggers (3)
+│   │       ├── index.ts            # startProactiveEngine() — wires 9 triggers
+│   │       ├── engine.ts           # sendProactive() — dedup gate + LLM + send
+│   │       ├── decision-engine.ts  # evaluate() — urgency vs disruption gate
+│   │       ├── triggers-scheduled.ts  # 6 triggers: morning, eod, taskNudge, emailAlert, escalation, optimizer
+│   │       ├── triggers-event.ts   # 3 triggers: preMeetingPrep, followUpReminder, crossSourcePairing
+│   │       └── types.ts            # UserCtx type, dedupAdd() helper
 │   ├── imessage/
-│   │   ├── sdk.ts                       # Photon iMessage Kit wrapper
-│   │   ├── router.ts                    # Message routing
-│   │   ├── batcher.ts                   # Rapid-fire message batching
-│   │   └── bubble-split.ts              # Long response splitting
+│   │   ├── sdk.ts                  # Photon iMessage Kit wrapper — send/listen/normalize
+│   │   ├── router.ts               # routeMessage() — isFromMe → ignore, else → agent
+│   │   ├── batcher.ts              # MessageBatcher — 1.5s gap / 6s max before flush
+│   │   └── bubble-split.ts         # splitIntoBubbles() — max 4 bubbles, semantic split
 │   ├── integrations/
-│   │   ├── composio.ts                  # Per-user OAuth + tool execution
-│   │   ├── calendar.ts                 # Google Calendar integration
-│   │   └── gmail.ts                    # Gmail integration
+│   │   ├── composio.ts             # OAuth, executeWithFallback(), per-user entities
+│   │   ├── calendar.ts             # pullTodayEvents, findFreeBlocks, analyzeCalendar, blockTime
+│   │   └── gmail.ts                # pullUnreadEmails, analyzeGmail, saveEmailDraft, sendEmail
 │   ├── minimax/
-│   │   ├── llm.ts                      # M2.7 wrapper + tool calling
-│   │   ├── tts.ts                      # Speech 2.8 TTS
-│   │   └── vision.ts                   # Image analysis
+│   │   ├── llm.ts                  # generate(), generateJSON(), generateWithTools(), model fallback
+│   │   └── vision.ts               # analyzeImage() — base64 + M2.7 multimodal
 │   ├── memory/
-│   │   └── db.ts                       # SQLite schema + queries
+│   │   └── db.ts                   # SQLite schema (6 tables) + all query functions
 │   └── listener/
-│       └── extractor.ts                # Background task/people extraction
-├── frontend/                            # Next.js dashboard (future)
-├── data/                               # SQLite database (created at runtime)
-└── audio/                              # Generated TTS files (created at runtime)
+│       └── extractor.ts            # startExtractionLoop() + runExtractionOnce()
+├── listener/
+│   └── index.ts                    # Standalone listener process (runs on listener Mac)
+├── data/                           # SQLite file created at runtime (data/nudge.db)
+└── package.json
 ```
 
-## Core Modules
+---
 
-### [src/index.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/index.ts)
+## 4. Boot Sequence
 
-Boot sequence that initializes all systems:
-1. Database initialization (WAL mode, 5s busy timeout)
-2. iMessage listener (auto-registers new users)
-3. Background extraction loop
-4. Proactive engine
-5. Cross-reference loop
+`npm start` → `npx tsx src/index.ts`
 
-Graceful degradation: If iMessage connection fails, runs without it.
-
-### [src/config.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/config.ts)
-
-Required environment variables:
-- `MINIMAX_API_KEY` - MiniMax API key
-- `MINIMAX_API_HOST` - MiniMax API base URL
-- `COMPOSIO_API_KEY` - Composio API key
-- `AGENT_CHAT_IDENTIFIER` - iMessage chat identifier
-
-Optional configuration:
-- `QUIET_HOURS_START/END` (default 23-7) - No proactive messages
-- `MAX_PROACTIVE_PER_HOUR` (default 3) - Rate limit proactive sends
-- `MORNING_BRIEFING_HOUR` (default 8) - Morning briefing time
-- `EOD_REVIEW_HOUR` (default 18) - End-of-day review time
-- `PRE_MEETING_MINUTES` (default 15) - Pre-meeting prep trigger window
-- `CALENDAR_POLL_MS` (default 300000 = 5min)
-- `EMAIL_POLL_MS` (default 600000 = 10min)
-- `MESSAGE_BATCH_MS` (default 30000 = 30s)
-
-### [src/imessage/sdk.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/imessage/sdk.ts)
-
-Photon iMessage Kit wrapper providing:
-- `sendText(to, text)` - Send text message
-- `sendBubbles(to, bubbles[])` - Send multiple messages with 600-1200ms delays
-- `sendAudio(to, audioPath, caption?)` - Send audio with optional caption
-- `sendWithVoice(to, text, ttsFn)` - Generate TTS and send, fallback to text
-- `startListening(onMessage)` - Start watching for incoming messages
-
-Message normalization: Handles multiple Photon SDK formats into `NormalizedMessage`:
-```typescript
-interface NormalizedMessage {
-  id: string;
-  text: string;
-  sender: string;
-  chatId: string;
-  isFromMe: boolean;
-  isGroupChat: boolean;
-  timestamp: number;
-  attachments: { path: string; mimeType?: string }[];
-}
+```
+1. import "./config"            → load .env, validate 4 required keys, export config object
+2. getDb()                      → create data/ dir, open SQLite, run schema migrations
+3. startListening(callback)     → Photon SDK watcher (2s poll, excludeOwnMessages)
+   └─ each message:
+      - routeMessage() → ignore if isFromMe
+      - getUserByPhone() → registerUser() if new
+      - storeMessage()
+      - handleAgentMessage()
+4. startExtractionLoop()        → setInterval 30s: unprocessed messages → LLM → tasks/people
+5. startProactiveEngine()       → scheduleTimers + setIntervals for all 9 triggers
+6. startCrossRefLoop()          → setInterval 5min: calendar+email+tasks → LLM → cachedInsights
+7. startServer()                → Bun.serve on LISTENER_PORT for listener bridge
 ```
 
-Deduplication: Maintains in-memory Set of processed message IDs (max 10,000).
+If iMessage connection fails, systems 4-7 still start. Nudge logs `"running without iMessage — other systems still available"`.
 
-### [src/imessage/router.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/imessage/router.ts)
+---
 
-Simple routing: `routeMessage(msg)` returns `'agent'` or `'ignore'`.
-- Ignores messages from self (`isFromMe: true`)
-- Everything else → agent
+## 5. Message Flow
 
-### [src/imessage/batcher.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/imessage/batcher.ts)
+```
+Incoming iMessage (Photon SDK raw event)
+  ↓
+sdk.ts: normalizeMessage()         → NormalizedMessage { id, text, sender, chatId, isFromMe, isGroupChat, timestamp, attachments[] }
+  ↓
+sdk.ts: dedup check                → processedIds Set (max 10,000)
+  ↓
+router.ts: routeMessage()          → isFromMe → 'ignore', else → 'agent'
+  ↓
+index.ts callback:
+  - getUserByPhone() / registerUser()
+  - storeMessage() → messages table (direction='in')
+  - handleAgentMessage()
+  ↓
+handler.ts: handleAgentMessage()
+  ├─ /reset /demo /time /important /priority /poll → bypass batcher → processMessage()
+  └─ everything else → batcher.add()
+       ↓ (after 1.5s gap or 6s max)
+     batcher.flush() → processMessage()
+  ↓
+handler.ts: processMessage()
+  ├─ task completion detection: "done with X" → completeTaskByDescription()
+  ├─ handleOnboarding() → returns true if still in onboarding
+  ├─ skip empty / acknowledgment messages
+  ├─ image attachment? → analyzeImage() → prepend to userContent
+  ├─ buildSystem() → SYSTEM_PROMPT + context + temporal voice + POST_HISTORY_ENFORCEMENT
+  ├─ createToolExecutor(phone)
+  ├─ generateWithTools(system, userContent, TOOL_DEFS, executor) → max 5 tool rounds
+  ├─ isDraft? validateDraft(text) : validateResponse(text)
+  ├─ splitIntoBubbles() → sendBubbles()
+  └─ logAgent()
+```
 
-Rapid-fire message batching:
-- Collects multiple messages within 1.5s gaps
-- Forces flush after 6s max wait
-- Deduplicates identical messages
-- Combines into single context
+---
 
-Not currently used in main flow — available for future multi-message scenarios.
+## 6. Onboarding Flow
 
-### [src/imessage/bubble-split.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/imessage/bubble-split.ts)
+Onboarding state is stored in `users.onboard_stage`:
+`'new'` → `'evaluating'` → `'waiting_oauth'` → `'active'`
 
-Long response splitting for iMessage bubbles:
-- Max 4 bubbles per response
-- Prefers newline splits (LLM naturally separates thoughts)
-- Semantic splitting at: "also", "anyway", "btw", "oh and", "but", "however", "though"
-- Merges tiny segments (<20 chars) with previous
+```
+Stage: new / evaluating
+─────────────────────────────────────────────────────────────────
+Bouncer LLM (BOUNCER_PROMPT):
+  - Capacity check: if active users >= 6 → "at capacity rn"
+  - Keeps conversation in onboardConvo Map<phone, string[]>
+  - Aims to confirm: name + role + busyness
+  - Once satisfied → emits "VERDICT: APPROVED" in response text
+  - After approval:
+    - generateJSON(EXTRACT_PROFILE_PROMPT, history) → { name, profile, email_heavy, calendar_heavy }
+    - updateUser(phone, { name, profile, onboard_stage: 'waiting_oauth' })
+    - getOAuthLinks(phone) → sends gmail: <url> and calendar: <url>
+    - "same google account for both. text me when you're done"
 
-## Agent System
+Stage: waiting_oauth
+─────────────────────────────────────────────────────────────────
+On next message from user:
+  - isDemoMode() ? skip check : checkUserConnected(phone) → { gmail, calendar }
+  - If connected:
+    - updateUser(phone, { onboard_stage: 'active' })
+    - "locked in, {name}"
+    - "give me a sec to look around..."
+    - Promise.allSettled([analyzeCalendar, analyzeGmail])
+    - generate(REVEAL_PROMPT) → splitIntoBubbles → validateResponse → sendBubbles
+  - If not connected:
+    - "don't see it yet — make sure you finished both links"
 
-### [src/agent/handler.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/handler.ts)
+Stage: active
+─────────────────────────────────────────────────────────────────
+handleOnboarding() returns false → falls through to main processMessage() flow
+```
 
-Main message handler orchestrating:
+**Demo mode shortcut**: `/demo` command sets `demoMode=true`. In `waiting_oauth`, the OAuth check is skipped — assumes already connected. Use for hackathon demos.
 
-**Onboarding Flow (Bouncer Pattern)**:
-1. New user → "who dis" energy, playful gatekeeping
-2. Gathers: confirmed first name + what they do + how busy
-3. Once approved → sends OAuth links (Gmail + Calendar)
-4. After OAuth complete → "locked in, {name}" + feature hints
+---
 
-**Main Flow**:
-1. `/reset` command - wipes database, restarts onboarding
-2. Skip acknowledgments (ok, got it, thanks, bet, cool, etc.)
-3. Image handling → vision analysis + text context
-4. LLM with tool calling (max 5 rounds)
-5. Validate response → send
+## 7. Demo Commands
 
-**Intent Classification** (regex-based):
-- `task` - tasks, todos, focus, priority
-- `email` - emails, inbox, unread, gmail
-- `schedule` - calendar, schedule, meetings, availability
-- `draft` - draft, write, reply, compose
-- `person` - who, what did X say/ask/send
+All commands bypass the `MessageBatcher` (immediate processing).
 
-### [src/agent/personality.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/personality.ts)
+| Command | Handler | Effect |
+|---------|---------|--------|
+| `/demo` | `processMessage()` | Sets `demoMode=true`, pre-warms calendar+gmail cache |
+| `/time HH:MM` | `processMessage()` | Sets virtual clock via `setVirtualTime(h, m)`, fires `evaluate('time_change', ...)` |
+| `/important` | `processMessage()` | Housekeeping scan: tasks vs email vs calendar, flags contradictions |
+| `/priority` | `processMessage()` | Runs `rankTasks()` + `formatRankedPlan()` + LLM summary |
+| `/poll` | `processMessage()` | Manually fires `evaluate('manual', ...)` decision engine |
+| `/reset` | `processMessage()` | `resetDatabase()` wipes all tables, clears onboardConvo + pendingOAuth maps |
 
-**System Prompt**: Defines Nudge's personality — lowercase, casual, roast-y friend who gives a shit.
+---
 
-**Post-History Enforcement**: Placed AFTER conversation for 90-95% compliance:
-- Max 120 words
-- No numbered lists
-- No "Here's" or "So," starts
-- One question max
-- Max 1 exclamation mark
+## 8. Agent System
 
-**Validation Functions**:
-- `validateResponse(text)` - Enforces voice rules, strips banned phrases, word limit
-- `validateDraft(text)` - Strips preamble, tech jargon
-- `getTemporalVoice()` - Time-of-day aware tone (6am-10am: efficient, 5pm-9pm: warmer)
+### handler.ts
 
-**Banned Phrases** (50+ phrases including):
-- Assistant language: "i'd be happy to", "let me help you", "great question"
-- Formal: "certainly", "absolutely", "indeed"
-- Tech jargon: "database", "api", "server", "agent", "pipeline"
+Key exports:
+- `handleAgentMessage(msg)` — entry point from index.ts and batcher
+- `classifyIntent(text)` — regex classifier returning `'task'|'email'|'schedule'|'draft'|'person'|'general'`
 
-**Banned Words**: "utilize", "leverage", "facilitate", "algorithm", "optimize", etc.
+`classifyIntent()` regexes:
+- `task`: `/\b(?:tasks?|todos?|focus|prioriti|urgent|what.*should|what.*next)/i`
+- `email`: `/\b(?:emails?|inbox|unread|mails?|gmail|summar\w* emails?)/i`
+- `schedule`: `/\b(?:calendar|schedule|meetings?|free at|busy|what time|standup|when\b.*\bis\b)/i`
+- `draft`: `/\b(?:draft|write\b.*\b(?:to|reply)|reply to|respond to|compose|response to)/i`
+- `person`: `/\b(?:who\b|what did \w+ (?:say|ask|send|want|need))/i`
 
-### [src/agent/context.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/context.ts)
+### personality.ts
 
-Context assembly with intent-aware section ordering:
+**`SYSTEM_PROMPT`** — defines Nudge's voice. Key rules:
+- Synthesize data into one casual text
+- Pattern observations in roast format: "u literally cant say no to meetings on tuesdays"
+- Max 35 words, max 2 sentences, usually 1
+- Match user's message length exactly
+- Never say "i recall" or "you mentioned" — drop facts like you just casually know
 
-**Intent-Specific Order**:
+**`POST_HISTORY_ENFORCEMENT`** — placed AFTER conversation history in system message for ~90-95% compliance. Hard rules: no periods at end, no emojis, no forbidden words/phrases/starters, max 35 words.
+
+**`validateResponse(text)`** — pre-filter applied to all LLM responses:
+1. Lowercase entire response
+2. Strip AI openers (whole clause): "i'd be happy to...", "i'd love to help...", "let me help you...", "as an ai...", "as a language model..."
+3. Strip filler/jargon words (regex replace): `certainly, absolutely, definitely, indeed, furthermore, moreover, additionally, nevertheless, nonetheless, regarding, assistance, apologize, delighted, utilize, leverage, facilitate, interestingly, comprehensive, robust, streamline, optimize, efficiency, productivity, workflow, database, api, server, agent, pipeline, searching, processing, fetching, analyzing, computing, algorithm`
+4. Strip markdown: `**bold**` → plain, numbered lists, bullet points
+5. Clean whitespace
+6. Strip trailing period
+7. Hard cap at 35 words
+8. Cap at 1 exclamation mark, 1 question mark
+
+**`validateDraft(text)`** — for `save_email_draft` tool responses only:
+1. Strip preamble: "here's a draft:", "here's what I'd say:", etc.
+2. Strip jargon words (subset of above)
+3. Clean whitespace
+Does NOT lowercase — email drafts need proper casing.
+
+**`getTemporalVoice()`** — returns time-of-day tone string:
+- 6-10am: `'morning — shorter, drier, efficient. nobody wants personality at 7am'`
+- 10am-12pm: `'late morning — they're in the zone. be direct'`
+- 12-2pm: `'lunch — casual. they're on their phone between bites'`
+- 2-5pm: `'afternoon — peak energy. roasts land harder'`
+- 5pm-11pm: `'evening — reflective. connect dots across the day'`
+- 11pm+: `'night — minimal. they're done'`
+- 12am-6am: `'late night — why are u awake. keep it real short'`
+
+Uses `nowDate()` from `demo.ts` so virtual time affects voice.
+
+### context.ts
+
+`assembleContext(intent?, userText?, phone?, userId?)` — assembles full LLM context string.
+
+Pulls in parallel: `analyzeCalendar(phone)`, `getTaskQueue(userId)`, `analyzeGmail(phone)`, `getRecentConversation(8, userId)`.
+
+Sections and their intent-based ordering:
+
+| Section | Content |
+|---------|---------|
+| `situation` | Current meeting + mins left, next meeting + mins until, urgent task count, next free block suggestion |
+| `conversation` | Last 8 agent_log entries reversed (most recent last) |
+| `events` | Today's calendar sorted by start time |
+| `blocks` | Free blocks (30min+) sorted by start time |
+| `tasks` | Open tasks max 10, urgency + deadline + assigned_by |
+| `emails` | Top 5 unread emails with from + subject + snippet |
+| `crossref` | People appearing in 2+ sources (inline cross-ref, not cached) |
+| `calInsights` | LLM calendar insights string |
+| `emailInsights` | LLM email triage string + action items |
+
+Section ordering by intent (`SECTION_ORDER`):
 - `task`: situation → conversation → tasks → calInsights → emailInsights → crossref → blocks → events → emails
-- `email`: situation → conversation → emailInsights → emails → crossref → ...
-- `schedule`: situation → conversation → events → calInsights → blocks → ...
-- `draft`: situation → conversation → emailInsights → emails → crossref → ...
-- `person`: situation → conversation → crossref → tasks → ...
+- `email`: situation → conversation → emailInsights → emails → crossref → calInsights → tasks → events → blocks
+- `schedule`: situation → conversation → events → calInsights → blocks → crossref → tasks → emailInsights → emails
+- `draft`: situation → conversation → emailInsights → emails → crossref → tasks → calInsights → events → blocks
+- `person`: situation → conversation → crossref → tasks → emailInsights → emails → calInsights → events → blocks
 
-**Sections**:
-1. **situation** - "Right now" anchor: current meeting, time until next, urgent tasks, next free block
-2. **conversation** - Last 8 messages
-3. **events** - Today's calendar sorted by time
-4. **blocks** - Free blocks (30min+) sorted by time
-5. **tasks** - Open tasks sorted by urgency (max 10)
-6. **emails** - Unread emails with from + subject + snippet (max 5)
-7. **crossref** - People appearing in 2+ sources (calendar + email, etc.)
-8. **calInsights** - LLM-generated calendar insights
-9. **emailInsights** - LLM-generated email triage + action items
+For `person` and `draft` intents, `fmtPersonDossier(name, userId)` is prepended using `extractPersonName()` / `extractDraftRecipient()`.
 
-**Person Extraction**:
-- `extractPersonName(text)` - Parses "what did X say" patterns
-- `extractDraftRecipient(text)` - Parses "reply to X" patterns
-- `fmtPersonDossier(name)` - Formats person data from DB
+Note: `context.ts:assembleContext()` is used by the proactive engine's `sendProactive()`. The main `processMessage()` flow in `handler.ts` uses tool-calling instead (LLM pulls data on demand via tools).
 
-### [src/agent/tools.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/tools.ts)
+### tools.ts
 
-OpenAI function-calling format tool definitions:
+9 tools in OpenAI function-calling format (`TOOL_DEFS: ToolDef[]`):
 
-| Tool | Purpose | When to Use |
-|------|---------|-------------|
-| `get_calendar` | Today's events, free blocks, insights | Schedule/meeting questions |
-| `get_emails` | Unread emails with triage | Email/inbox questions |
-| `get_tasks` | Open task queue by urgency | What to focus on |
-| `get_person` | Person dossier (messages, tasks, context) | User mentions someone by name |
-| `get_conversation` | Recent conversation history | Context on prior discussion |
-| `save_email_draft` | Create draft in Gmail (NOT send) | Draft/write/reply requests |
-| `get_cross_insights` | Cross-source connections | Connect dots before advice |
+| # | Name | Required Params | Optional Params | Notes |
+|---|------|-----------------|-----------------|-------|
+| 1 | `get_calendar` | none | — | Today's events, free blocks, insights |
+| 2 | `get_emails` | none | — | Unread emails with triage + action items |
+| 3 | `get_tasks` | none | — | Open tasks sorted by urgency |
+| 4 | `get_person` | `name: string` | — | Person dossier: context, last contact, messages, tasks |
+| 5 | `get_conversation` | none | `limit: number` (default 8) | Recent agent_log entries |
+| 6 | `save_email_draft` | `to: string`, `subject: string`, `body: string` | — | Saves draft, does NOT send |
+| 7 | `send_email` | `to: string`, `subject: string`, `body: string` | — | Actually sends immediately |
+| 8 | `block_time` | `title: string`, `duration_min: number` | `date: string`, `hour: number` | Blocks calendar time; auto-finds free slot if no hour given |
+| 9 | `get_cross_insights` | none | — | Returns `getCachedInsights()` from crossref loop |
 
-Tool executor uses Composio per-user entities when available.
+`createToolExecutor(phone?)` returns the async executor function bound to the user's phone. Tool calls: `save_email_draft` → response goes through `validateDraft()`; all others → `validateResponse()`.
 
-### [src/agent/crossref.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/crossref.ts)
+---
 
-Background intelligence loop (5-minute interval):
-- Pulls calendar, email, tasks
-- Uses LLM to find meaningful connections:
-  - Same person in calendar + email + tasks
-  - Prep needed before meetings based on email
-  - Task deadlines conflicting with calendar
-  - Unanswered emails from task-assigners
-  - Follow-ups after recent meetings
-- Caches insights for `get_cross_insights` tool
+## 9. Task System
 
-## Proactive System
+### Schema (tasks table — 18 columns)
 
-### [src/agent/proactive/index.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/proactive/index.ts)
+| Column | Type | Default | Description |
+|--------|------|---------|-------------|
+| `id` | TEXT PK | uuid | Auto-generated |
+| `user_id` | TEXT | null | FK to users.id |
+| `source` | TEXT | required | Where extracted from (e.g., `'imessage'`) |
+| `source_ref` | TEXT | null | Reference ID in source system |
+| `description` | TEXT | required | The task itself |
+| `assigned_by` | TEXT | null | Person who assigned it |
+| `deadline` | TEXT | null | Date string |
+| `urgency` | INTEGER 1-5 | 3 | Higher = more urgent |
+| `status` | TEXT | `'open'` | `open` / `done` / `dismissed` |
+| `created_at` | TEXT | now | SQLite datetime |
+| `updated_at` | TEXT | now | SQLite datetime |
+| `estimated_minutes` | INTEGER | null | 15/30/45/60/90/120 |
+| `effort_level` | TEXT | `'focused'` | `quick` / `focused` / `deep` |
+| `environment` | TEXT | `'anywhere'` | `anywhere` / `computer` / `in-person` |
+| `depends_on` | TEXT | null | Comma-separated task IDs |
+| `deadline_source` | TEXT | null | `explicit` / `inferred` / `professor` / `teammate` |
+| `deadline_confidence` | TEXT | `'inferred'` | `hard` / `soft` / `inferred` |
+| `completed_at` | TEXT | null | Set when status → done |
 
-Orchestrator that:
-1. Schedules daily triggers (morning briefing, EOD review) per user on boot
-2. Starts interval triggers for all active users:
-   - Pre-meeting prep: every 5min
-   - Task nudge: every 30min
-   - Email alert: every 10min
-   - Email escalation: every 10min
-   - Schedule optimizer: every 15min
-   - Follow-up reminder: every 5min
-   - Cross-source pairing: every 5min
+### Ranking Engine — ranking.ts
 
-### [src/agent/proactive/engine.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/proactive/engine.ts)
+`rankTasks(tasks[], freeBlocks[], currentTime?)` → `RankedTask[]` sorted by score descending.
 
-`sendProactive(triggerType, prompt, userId, chatId, phone)`:
-1. Assembles full context for user
-2. Generates response via LLM with personality
-3. Validates response
-4. Checks duplicate gate (48hr dedup)
-5. Logs to proactive_log table
-6. Sends via iMessage
+**Scoring formula**:
+```
+score = (urgency * 3)
+      + (deadlineScore * 2)
+      + (calendarFitScore * 1.5)
+      + (dependencyClearScore * 1)
+```
 
-### [src/agent/proactive/triggers-scheduled.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/proactive/triggers-scheduled.ts)
+**Component functions**:
 
-**Time-Based Triggers**:
+`deadlineScore(deadline, confidence, now)`:
+- No deadline → 2
+- Overdue or < 24hr → 10
+- 24-48hr → 6
+- Further out → 3
+- Multiplied by confidence: `hard` × 1.0, `soft` × 0.6, `inferred` × 0.3
 
-1. **Morning Briefing** (config.MORNING_BRIEFING_HOUR, default 8am)
-   - Key meetings today
-   - Top tasks
-   - Urgent email items
-   - Keep it tight
+`calendarFitScore(estimatedMinutes, freeBlocks, now)`:
+- No estimate or no blocks → 0
+- Fits in the very next future free block → 5
+- Fits in any future block today → 3
+- Doesn't fit → 0
 
-2. **End of Day Review** (config.EOD_REVIEW_HOUR, default 6pm)
-   - Meeting count
-   - Open tasks + urgent count
-   - What likely got done
-   - What's hanging
-   - #1 thing for tomorrow
+`dependencyClearScore(dependsOn, allTasks)`:
+- No dependencies → 3
+- All dependencies completed → 3
+- Any unmet dependency → -100 (effectively removes from ranking, `blocked: true`)
 
-3. **Task Nudge** (every 30min)
-   - Only if urgency >= 4 tasks exist
-   - Max 3 tasks mentioned
-   - "; " separated list
+### Task Lifecycle
 
-4. **Email Alert** (every 10min)
-   - Pulls 3 unread emails
-   - Flags may-need-attention items
-   - Summary format: "from: subject; from: subject"
+1. **Extract**: `extractor.ts:runExtractionOnce()` → LLM parses messages → `storeTasks()`
+2. **Rank**: `ranking.ts:rankTasks()` → scored + sorted for display or proactive decisions
+3. **Complete**: Two paths:
+   - Natural language: `"done with X"` → `completeTaskByDescription(desc, userId)` — fuzzy match (50% keyword overlap), sets `status='done'`, `completed_at=now()`
+   - Direct: `completeTask(taskId)` by exact ID
+4. **Complete detection**: Regex `/(?:done|finished|completed|knocked out)\s+(?:with\s+)?(?:the\s+)?(.+)/i` in `processMessage()`, falls through to LLM for natural response
 
-5. **Email Escalation** (every 10min)
-   - Detects 3+ unread from same sender
-   - One alert per sender (dedup)
-   - Heads-up format
+---
 
-6. **Schedule Optimizer** (every 15min)
-   - Finds next free block (30min+) after now
-   - Matches with urgency >= 3 task
-   - One suggestion per block
-   - Specific time + task + why now
+## 10. Proactive System
 
-### [src/agent/proactive/triggers-event.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/agent/proactive/triggers-event.ts)
+Two paths to send a proactive message:
 
-**Event-Based Triggers**:
+**Path A: Interval triggers → sendProactive()**
+```
+setInterval / setTimeout
+  ↓
+trigger function (e.g., taskNudge)
+  ↓
+sendProactive(triggerType, prompt, userId, chatId, phone)  ← engine.ts
+  ↓
+assembleContext() → generate(SYSTEM_PROMPT, prompt) → validateResponse()
+  ↓
+checkGates(): MD5 hash → wasRecentlySent(hash, 48hr) → return null if seen
+  ↓
+sendText(chatId, text) → logProactive(triggerType, hash, userId)
+```
 
-1. **Pre-Meeting Prep** (every 5min)
-   - Detects meetings starting in next 15min (configurable)
-   - One alert per meeting
-   - Includes: title, attendees, time until
-   - "what should i know?" framing
+**Path B: Event triggers → evaluate() decision engine**
+```
+Triggered by: listener bridge new messages, /time command, /poll command
+  ↓
+evaluate(trigger, userId, chatId, phone, newData)  ← decision-engine.ts
+  ↓
+Rate limit: countRecentProactive(60min) >= MAX_PROACTIVE_PER_HOUR → { action: 'silent' }
+  ↓
+scoreDisruption(cal):
+  - In meeting → 8
+  - Meeting in < PRE_MEETING_MINUTES → 7
+  - Quiet hours → 10
+  - Free → 2
+  ↓
+DECISION_PROMPT → generateJSON() → { urgency, should_send, message, reason }
+  ↓
+Decision gate: !should_send OR urgency < disruption → { action: 'queue' }
+  ↓
+Dedup: wasRecentlySent(hash, 48hr) → { action: 'silent' }
+  ↓
+sendProactive() → { action: 'send' }
+```
 
-2. **Follow-Up Reminder** (every 5min)
-   - Finds meetings that ended 30min-3hr ago
-   - Only meetings with attendees
-   - Asks if follow-ups needed
-   - One reminder per meeting
+### All 9 Triggers
 
-3. **Cross-Source Pairing** (every 5min)
-   - Looks for upcoming meetings (within 2hr)
-   - Cross-references attendees against:
-     - Unread emails (sender name match)
-     - Open tasks (assigned_by name match)
-   - First match triggers alert
-   - Format: "heads up — {name} appears in {sources}. connect the dots."
+**Scheduled (triggers-scheduled.ts)**:
 
-## Integration Layer
+| Trigger | Function | Interval | Condition |
+|---------|----------|----------|-----------|
+| Morning Briefing | `scheduleMorningBriefing()` → `morningBriefing()` | Once daily at `MORNING_BRIEFING_HOUR` (8am) | Always |
+| End of Day Review | `scheduleEodReview()` → `endOfDayReview()` | Once daily at `EOD_REVIEW_HOUR` (6pm) | Always |
+| Task Nudge | `taskNudge()` | Every 30min | Only if `urgency >= 4` tasks exist |
+| Email Alert | `emailAlert()` | Every `EMAIL_POLL_MS` (10min) | Only if unread emails exist |
+| Email Escalation | `emailEscalation()` | Every `EMAIL_POLL_MS` (10min) | Only if 3+ unread from same sender |
+| Schedule Optimizer | `scheduleOptimizer()` | Every 15min | Only if next free block >= 30min AND urgency >= 3 task exists |
 
-### [src/integrations/composio.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/integrations/composio.ts)
+**Event-driven (triggers-event.ts)**:
 
-**Per-User OAuth**:
-- Phone number → safe entity ID (user-{digits})
-- `getOAuthLinks(phone)` - Initiates Gmail + Google Calendar OAuth
-- `checkUserConnected(phone)` - Checks active connections
+| Trigger | Function | Interval | Condition |
+|---------|----------|----------|-----------|
+| Pre-Meeting Prep | `preMeetingPrep()` | Every `CALENDAR_POLL_MS` (5min) | Meeting starting within `PRE_MEETING_MINUTES` (15min) |
+| Follow-Up Reminder | `followUpReminder()` | Every `CALENDAR_POLL_MS` (5min) | Meeting with attendees ended 30min-3hr ago |
+| Cross-Source Pairing | `crossSourcePairing()` | Every `CALENDAR_POLL_MS` (5min) | Attendee of upcoming meeting (within 2hr) also appears in unread emails or open tasks |
 
-**Tool Execution with Fallback**:
-- `executeWithFallback(strategies[], searchKeys[], label, phone)`
-- Tries multiple Composio action strategies
-- Searches result for expected data keys
-- Returns first non-empty array found
-- Handles mock mode (no Composio key)
+**Decision gate** (used by Path B): Urgency score (1-10 from LLM) must exceed disruption score (2-10 based on calendar context) for the message to send. This prevents interrupting meetings or sending during quiet hours unless the urgency genuinely warrants it.
 
-### [src/integrations/calendar.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/integrations/calendar.ts)
+---
 
-**Pull**:
-- `pullTodayEvents(phone?)` - Gets today's calendar via Composio
-- Tries 3 action strategies: GOOGLECALENDAR_FIND_EVENT, GOOGLECALENDAR_EVENTS_LIST
-- Normalizes to `CalendarEvent[]`
+## 11. Listener Bridge
 
-**Structural Analysis** (no LLM):
-- `findFreeBlocks(events)` - Gaps >= 30min between meetings
-- `analyzeStructure(events)` - Total hours, back-to-back count, focus blocks, tags
+The listener bridge handles the two-Mac setup. The standalone listener Mac runs `listener/index.ts` as a separate process.
 
-**LLM Analysis**:
-- `analyzeCalendar(phone?)` - Full analysis with insights
-- Generates: insights[], busiest_window, prep_needed[], conflicts[]
-- Falls back to structural analysis if LLM fails
+```
+listener/index.ts (Listener Mac)
+  ↓
+IMessageSDK watcher (2s poll, excludeOwnMessages)
+  - Skips isFromMe messages
+  - Skips chats in IGNORE_CHAT_IDS
+  - Skips empty messages
+  - Batches 3s (BATCH_MS) before flushing
+  ↓
+fetch(AGENT_URL + '/api/messages', {
+  method: 'POST',
+  headers: { Authorization: 'Bearer ' + SECRET },
+  body: { owner_phone: OWNER_PHONE, messages: [{ id, text, sender, chat_id, is_group, timestamp }] }
+})
+  ↓
+server.ts: POST /api/messages handler
+  - Authorization check
+  - getUserByPhone(owner_phone) → userId, chatId
+  - storeMessage() for each message
+  - runExtractionOnce(userId) → returns count of extracted tasks
+  - If extracted > 0: evaluate('listener', userId, chatId, phone, context) → decision engine
+  ↓
+Response: { ok: true, stored: N, extracted: N }
+```
 
-### [src/integrations/gmail.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/integrations/gmail.ts)
+Health check: `GET /health` returns `'ok'` (no auth required).
 
-**Pull**:
-- `pullUnreadEmails(maxResults, phone?)` - Gets unread via Composio
-- Tries 3 action strategies: GMAIL_FETCH_EMAILS, GMAIL_LIST_THREADS
-- Normalizes to `EmailSummary[]`
+---
 
-**Structural Analysis** (no LLM):
-- Top senders by frequency
-- Tags: email_heavy (10+), email_light (2-), sender_escalation (3+ from same)
+## 12. Integration Layer
 
-**LLM Analysis**:
-- `analyzeGmail(phone?)` - Full triage
-- Generates: action_items[], can_ignore[], insights[], urgent_count
+### composio.ts
+
+Per-user entity model: phone number → `user-{digits}` entity ID in Composio.
+
+Key functions:
+- `checkUserConnected(phone)` → `{ gmail: boolean, calendar: boolean }` — checks active OAuth connections
+- `getOAuthLinks(phone)` → `{ gmail?: string, calendar?: string }` — initiates OAuth flows, returns redirect URLs
+- `executeWithFallback(strategies[], searchKeys[], label, phone?)` — tries each strategy in order, uses `findArrayInResponse()` to extract data from varied response shapes; returns first non-empty array
+- `isMockMode()` — returns `true` if Composio init failed (no key or network error); all operations return empty/false in mock mode
+
+### calendar.ts
+
+**Pull**: `pullTodayEvents(phone?)` — 3 Composio action fallback strategies: `GOOGLECALENDAR_FIND_EVENT`, `GOOGLECALENDAR_EVENTS_LIST`
+
+**Analyze**: `analyzeCalendar(phone?)` → `CalendarAnalysis { events, freeBlocks, insights, tags }`
+- `findFreeBlocks(events)` — structural, gaps >= 30min
+- `analyzeStructure(events)` — tags: `meeting_heavy`, `meeting_light`, `back_to_back`, `has_focus_blocks`
+- LLM pass: `generateJSON(CALENDAR_ANALYSIS_PROMPT, scheduleText)` → insights[], prep_needed[], conflicts[]
 - Falls back to structural if LLM fails
 
-**Draft Saving**:
-- `saveEmailDraft(to, subject, body, phone?)` - Creates Gmail draft
-- Tries 3 strategies
-- Returns success/failure message
+**Block**: `blockTime(title, startTime, durationMin, phone?)` — 4 Composio action strategies for `GOOGLECALENDAR_CREATE_EVENT`
 
-## LLM & Voice
+**Auto-block**: `findAndBlockTime(title, durationMin, preferredDate?, phone?)` — finds first free block >= durationMin, blocks it; if none today, books 9am tomorrow
 
-### [src/minimax/llm.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/minimax/llm.ts)
+### gmail.ts
 
-**Client**: OpenAI SDK with MiniMax base URL
+**Pull**: `pullUnreadEmails(maxResults, phone?)` — 3 Composio action fallback strategies: `GMAIL_FETCH_EMAILS`, `GMAIL_LIST_THREADS`
 
-**Model Fallback Chain**:
-1. MiniMax-M2.7
-2. minimax-m2.7
-3. MiniMax-M2.7-highspeed
+**Analyze**: `analyzeGmail(phone?)` → `GmailAnalysis { emails, insights, tags, topSenders, actionItems }`
+- Structural: top senders by frequency, tags: `email_heavy`, `email_light`, `sender_escalation`
+- LLM pass: `generateJSON(EMAIL_ANALYSIS_PROMPT, emailText)` → action_items[], can_ignore[], insights[], urgent_count
+- Falls back to structural if LLM fails
 
-**Core Functions**:
-- `generate(system, user)` - Basic completion
-- `generateJSON(system, user)` - JSON mode, auto-parses
-- `generateWithTools(system, user, tools, executor)` - Tool calling (max 5 rounds)
+**Draft**: `saveEmailDraft(to, subject, body, phone?)` — 3 Composio action strategies: `GMAIL_CREATE_DRAFT`, `GMAIL_DRAFTS_CREATE`
 
-**Helpers**:
-- `stripThinkTags(text)` - Removes `<think>...</think>` tags
-- `extractJSON(text)` - Extracts JSON from markdown code blocks
+**Send**: `sendEmail(to, subject, body, phone?)` — 4 Composio action strategies: `GMAIL_SEND_EMAIL`, `GMAIL_EMAILS_SEND`, `GMAIL_SEND`
 
-### [src/minimax/tts.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/minimax/tts.ts)
+---
 
-Speech 2.8 TTS with endpoint fallback:
-1. `/v1/t2a_v2`
-2. `/v1/text_to_speech`
-3. `/v1/tts`
+## 13. LLM & Vision
 
-Voice: `male-qn-qingse` with emotion setting
+### minimax/llm.ts
 
-Output: MP3 files in `audio/` directory
+**Client**: OpenAI SDK pointed at `${MINIMAX_API_HOST}/v1`
 
-### [src/minimax/vision.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/minimax/vision.ts)
+**Model fallback chain** (tried in order, first success wins):
+1. `MiniMax-M2.7`
+2. `minimax-m2.7`
+3. `MiniMax-M2.7-highspeed`
 
-M2.7 multimodal image analysis:
-- Reads image file as base64
-- Sends to chat completion with image_url
-- Returns description text
+All models fail → returns `""` for text, `{}` for JSON.
 
-## Memory & Persistence
+**Core functions**:
+- `generate(system, user)` → `Promise<string>` — basic chat completion, strips `<think>` tags
+- `generateJSON(system, user)` → `Promise<any>` — JSON mode + `response_format: { type: 'json_object' }`, auto-parses; extracts from markdown code blocks if needed
+- `generateWithTools(system, user, tools, executor)` → `Promise<{ text: string; toolsCalled: string[] }>` — full tool-calling loop, max 5 rounds per model; appends tool results to messages and loops; on max-round hit, does one final completion without tools; falls back to `generate()` if all models fail tool-calling
 
-### [src/memory/db.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/memory/db.ts)
+**Helper**: `stripThinkTags(text)` — removes `<think>...</think>` blocks from reasoning models
 
-SQLite database (better-sqlite3) with WAL mode.
+### minimax/vision.ts
 
-**Schema**:
+`analyzeImage(imagePath)` — reads image file as base64 data URI, sends to `MiniMax-M2.7` (no fallback) with `VISION_PROMPT`. Supports JPEG, PNG, GIF, WebP.
 
-```sql
-users (
-  id TEXT PRIMARY KEY,
-  phone TEXT UNIQUE,
-  chat_id TEXT,
-  name TEXT,
-  profile TEXT,
-  onboard_stage TEXT DEFAULT 'new',
-  active INTEGER DEFAULT 1,
-  created_at DATETIME
-)
+**VISION_PROMPT** instructs extraction of: assignment rubric items/percentages/deadlines, conversation asks/deadlines, schedule dates/events, notes action items, receipt amounts/dates. Returns plain text with specific numbers, dates, names.
 
-messages (
-  id TEXT PRIMARY KEY,
-  user_id TEXT,
-  chat_id TEXT,
-  sender TEXT,
-  content TEXT,
-  timestamp DATETIME,
-  direction TEXT CHECK(in/out),
-  has_attachment INTEGER,
-  attachment_type TEXT,
-  attachment_path TEXT,
-  processed INTEGER DEFAULT 0
-)
+When a user sends an image in iMessage, `processMessage()` calls `analyzeImage()`, prepends the analysis as `[user sent a photo: ...]` to `userContent`, and also stores the analysis as a message and runs `runExtractionOnce()` to extract tasks from photo content (rubrics, screenshots).
 
-tasks (
-  id TEXT PRIMARY KEY,
-  user_id TEXT,
-  source TEXT,
-  source_ref TEXT,
-  description TEXT,
-  assigned_by TEXT,
-  deadline TEXT,
-  urgency INTEGER 1-5 DEFAULT 3,
-  status TEXT CHECK(open/done/dismissed),
-  created_at DATETIME,
-  updated_at DATETIME
-)
+---
 
-people (
-  id TEXT PRIMARY KEY,
-  user_id TEXT,
-  name TEXT,
-  phone TEXT,
-  last_contact TEXT,
-  context_notes TEXT,
-  open_tasks INTEGER DEFAULT 0
-)
+## 14. Personality & Validation
 
-agent_log (
-  id TEXT PRIMARY KEY,
-  user_id TEXT,
-  direction TEXT CHECK(in/out),
-  content TEXT,
-  message_type TEXT DEFAULT 'text',
-  audio_path TEXT,
-  timestamp DATETIME
-)
-
-proactive_log (
-  id TEXT PRIMARY KEY,
-  user_id TEXT,
-  trigger_type TEXT,
-  content_hash TEXT,
-  sent_at DATETIME
-)
-```
-
-**Key Queries**:
-- `getActiveUsers()` - All active users
-- `getUserByPhone(phone)` - User lookup by phone
-- `getUserByChatId(chatId)` - User lookup by chat (with phone-in-chatId fallback)
-- `storeMessage(msg)` - Insert with dedup (INSERT OR IGNORE)
-- `getUnprocessedMessages(limit, userId?)` - For extractor
-- `markProcessed(ids)` - Batch update
-- `storeTasks(tasks[], userId?)` - Batch insert with dedup
-- `getTaskQueue(userId?)` - Open tasks sorted by urgency
-- `getRecentConversation(limit, userId?)` - Last N agent exchanges
-- `getPersonDossier(name, userId?)` - Person + messages + tasks
-- `logAgent(entry)` - Agent activity logging
-- `logProactive(trigger_type, hash, userId)` - Proactive send logging
-- `wasRecentlySent(hash, minutes, userId?)` - 48hr proactive dedup
-- `countRecentProactive(minutes, userId?)` - Rate limit check
-- `getTriggerEngagement(days, userId?)` - Trigger analytics
-- `resetDatabase()` - Full wipe for /reset command
-
-## Background Systems
-
-### [src/listener/extractor.ts](file:///Users/johnnysheng/Documents/trae_projects/imesg/src/listener/extractor.ts)
-
-30-second extraction loop:
-
-1. Fetch unprocessed messages (max 20)
-2. Send batch to M2.7 for extraction:
-   - Tasks (description, assigned_by, deadline, urgency)
-   - Commitments (description, to_whom, deadline)
-   - People (name, context)
-3. Regex fallback for people extraction (pattern matching)
-4. Store tasks in DB
-5. Store people in DB (dedup by name)
-6. Mark messages as processed
-
-**LLM Prompt**:
-```
-Analyze these iMessage messages. Extract as JSON:
-{"tasks":[...],"commitments":[...],"people":[...]}
-Be specific. Include names and exact asks.
-```
-
-## Onboarding Flow
+### System prompt structure built in handler.ts: `buildSystem(context)`
 
 ```
-New User Texts Nudge
-  ↓
-Bouncer: "who dis" / "new phone who dis"
-  ↓
-User responds
-  ↓
-Bouncer: guesses name/job/busyness playfully
-  ↓
-Keeps chatting until has: confirmed name + what they do + how busy
-  ↓
-"VERDICT: APPROVED"
-  ↓
-Extract profile via LLM JSON
-  ↓
-Update user: name, profile, onboard_stage='waiting_oauth'
-  ↓
-Send OAuth links: Gmail + Calendar
-  ↓
-User completes OAuth
-  ↓
-User texts again
-  ↓
-checkUserConnected() → both connected
-  ↓
-Update user: onboard_stage='active'
-  ↓
-"locked in, {name}"
-  ↓
-Feature hints
-  ↓
-Full agent access
+SYSTEM_PROMPT (with {context} filled)
++ "\ntone: " + getTemporalVoice()
++ "\n\n" + POST_HISTORY_ENFORCEMENT
 ```
 
-**Max Users**: 6 active users (capacity check during onboarding)
+`POST_HISTORY_ENFORCEMENT` is placed AFTER conversation history because LLM compliance is higher when rules appear at the end of the context window (Icarus DQ-D4-03 research finding).
 
-**Bouncer Rules**:
-- ONE message at a time, short, lowercase
-- Never explain what Nudge is
-- Be funny, roast a little
-- Gatekeeping IS the charm
+### validateResponse() pipeline
 
-## Message Processing Flow
+Called on every LLM response before sending (except email drafts):
+1. `text.toLowerCase()` — all lowercase
+2. AI opener strip (regex per pattern, nukes entire opening clause)
+3. Filler/jargon word removal (`fillerRe` = combined FILLER_WORDS + JARGON_WORDS)
+4. Markdown artifact strip: `**bold**` → plain, `1. ` → removed, `- ` → removed
+5. Whitespace normalization: collapse 3+ newlines → 2, collapse double spaces
+6. Trailing period removal
+7. Hard 35-word cap (slice after split on whitespace)
+8. Exclamation cap: max 1 (`!` → replaced after first)
+9. Question cap: max 1 (`?` → replaced after first)
 
+### validateDraft() pipeline
+
+Called only when `toolsCalled.includes('save_email_draft')`:
+1. Strip preamble regex `DRAFT_PREAMBLE_RE`: "here's a draft:", "here's what I'd say:", etc.
+2. Tech jargon removal (JARGON_WORDS only, not FILLER_WORDS)
+3. Whitespace normalization
+4. Does NOT lowercase, does NOT cap word count
+
+### getTemporalVoice()
+
+Reads `nowDate().getHours()`. Returns a tone instruction string injected into the system prompt. Respects virtual time from `demo.ts` so `/time` command changes voice mid-demo.
+
+---
+
+## 15. Memory & Persistence
+
+SQLite file at `data/nudge.db`. WAL mode + 5s busy timeout.
+
+### 6 Tables
+
+**`users`**
 ```
-Raw iMessage (Photon SDK format)
-  ↓
-normalizeMessage() → NormalizedMessage
-  ↓
-Deduplicate (in-memory Set)
-  ↓
-routeMessage() → isFromMe? → agent or ignore
-  ↓
-Auto-register if new phone
-  ↓
-storeMessage() → SQLite
-  ↓
-handleAgentMessage()
-  ├─ /reset? → resetDatabase() → restart
-  ├─ Onboarding check → handleOnboarding()
-  ├─ Skip acknowledgments
-  ├─ Image? → analyzeImage() → append to text
-  ├─ generateWithTools() → LLM + tools (5 rounds max)
-  ├─ validateResponse() or validateDraft()
-  ├─ sendText()
-  └─ logAgent()
-  ↓
-Response sent
+id TEXT PK, phone TEXT UNIQUE, chat_id TEXT,
+name TEXT, profile TEXT,
+onboard_stage TEXT DEFAULT 'new',   -- 'new' | 'evaluating' | 'waiting_oauth' | 'active'
+active INTEGER DEFAULT 1,
+created_at TEXT DEFAULT datetime('now')
 ```
 
-## Error Handling
+**`messages`**
+```
+id TEXT PK, user_id TEXT, chat_id TEXT NOT NULL, sender TEXT NOT NULL,
+content TEXT, timestamp TEXT DEFAULT datetime('now'),
+direction TEXT CHECK(direction IN ('in','out')),
+has_attachment INTEGER DEFAULT 0, attachment_type TEXT, attachment_path TEXT,
+processed INTEGER DEFAULT 0      -- 0=unprocessed, 1=extracted
+```
 
-**Layered Fallbacks**:
-1. iMessage SDK fails → runs without iMessage
-2. Extraction loop fails → logs, continues
-3. Proactive engine fails → logs, continues
-4. LLM all models fail → returns empty/error
-5. Composio in mock mode → returns empty arrays
-6. Individual trigger fails → logs warning, continues
+**`tasks`** (base schema + 7 migration columns)
+```
+id TEXT PK, user_id TEXT, source TEXT NOT NULL, source_ref TEXT,
+description TEXT NOT NULL, assigned_by TEXT, deadline TEXT,
+urgency INTEGER DEFAULT 3 CHECK(urgency BETWEEN 1 AND 5),
+status TEXT DEFAULT 'open' CHECK(status IN ('open','done','dismissed')),
+created_at TEXT DEFAULT datetime('now'), updated_at TEXT DEFAULT datetime('now'),
+-- migration columns (added via ALTER TABLE):
+estimated_minutes INTEGER, effort_level TEXT DEFAULT 'focused',
+environment TEXT DEFAULT 'anywhere', depends_on TEXT,
+deadline_source TEXT, deadline_confidence TEXT DEFAULT 'inferred',
+completed_at TEXT
+```
 
-**Rate Limiting**:
-- Proactive: 3 per hour per user (configurable)
-- Proactive dedup: 48hr per content hash
-- Tool calls: max 5 rounds per message
+**`people`**
+```
+id TEXT PK, user_id TEXT, name TEXT NOT NULL, phone TEXT,
+last_contact TEXT, context_notes TEXT, open_tasks INTEGER DEFAULT 0
+```
 
-## Testing
+**`agent_log`**
+```
+id TEXT PK, user_id TEXT,
+direction TEXT CHECK(direction IN ('in','out')),
+content TEXT, message_type TEXT DEFAULT 'text', audio_path TEXT,
+timestamp TEXT DEFAULT datetime('now')
+```
 
-**Test Commands**:
+**`proactive_log`**
+```
+id TEXT PK, user_id TEXT, trigger_type TEXT NOT NULL,
+content_hash TEXT NOT NULL,       -- MD5 of message content for dedup
+sent_at TEXT DEFAULT datetime('now')
+```
+
+### Key Queries
+
+| Function | What it does |
+|----------|-------------|
+| `getActiveUsers()` | All users where `active=1` |
+| `getUserByPhone(phone)` | Single user lookup |
+| `getUserByChatId(chatId)` | Lookup by chatId or phone contained in chatId |
+| `registerUser(phone, chatId, name?)` | `INSERT OR IGNORE`, returns id |
+| `updateUser(phone, updates)` | Updates name/profile/onboard_stage |
+| `storeMessage(msg)` | `INSERT OR IGNORE` (dedup on id) |
+| `getUnprocessedMessages(limit, userId?)` | For extractor — where `processed=0` |
+| `markProcessed(ids[])` | Batch UPDATE `processed=1` |
+| `storeTasks(tasks[], userId?)` | Batch `INSERT OR IGNORE` (dedup on id) |
+| `getTaskQueue(userId?)` | Open tasks by urgency DESC |
+| `getTasksWithDetails(userId?)` | Alias for `getTaskQueue()` |
+| `completeTask(taskId)` | Sets `status='done'`, `completed_at=now()` |
+| `completeTaskByDescription(desc, userId?)` | Fuzzy match (50% keyword overlap), then `completeTask()` |
+| `getDependentTasks(taskId)` | Tasks whose `depends_on` contains taskId |
+| `logAgent(entry, userId?)` | Insert into agent_log |
+| `logProactive(type, hash, userId?)` | Insert into proactive_log |
+| `wasRecentlySent(hash, minutes, userId?)` | Dedup check for proactive messages |
+| `countRecentProactive(minutes, userId?)` | Rate limit check |
+| `getRecentConversation(limit, userId?)` | Last N agent_log entries DESC |
+| `getPersonDossier(name, userId?)` | Person + messages + tasks (LIKE %name%) |
+| `getTriggerEngagement(days, userId?)` | Analytics: proactive sends vs user responses within 30min |
+| `resetDatabase()` | DELETE FROM all tables |
+
+---
+
+## 16. Background Systems
+
+Three loops start on boot:
+
+### Extraction Loop — `src/listener/extractor.ts`
+
+`startExtractionLoop()` — `setInterval(30s)`
+
+Each tick:
+1. `getUnprocessedMessages(20)` — up to 20 unprocessed messages
+2. If none, return early
+3. Format: `[sender] content\n` per message
+4. `generateJSON(PROMPT, batch)` → `{ tasks[], commitments[], people[] }`
+5. Regex person extraction as fallback (`PERSON_RE` patterns)
+6. Dedup LLM + regex people by name
+7. `storeTasks()` → tasks table
+8. `storePeopleFromResult()` → people table (`INSERT OR IGNORE` by name-slug id)
+9. `markProcessed(ids)` — mark all as processed
+
+`runExtractionOnce(userId?)` — same logic, scoped to userId, called on-demand from server.ts and handler.ts image handling.
+
+### Cross-Ref Loop — `src/agent/crossref.ts`
+
+`startCrossRefLoop(phone?)` — runs immediately then `setInterval(5min)`
+
+Each tick:
+1. Pull calendar + email + tasks in parallel
+2. Format each source as bulleted text
+3. `generate(CROSSREF_PROMPT, dataBlock)` → 3-5 bullet insights
+4. Update `cachedInsights` (module-level string)
+5. `getCachedInsights()` — returned by `get_cross_insights` tool
+
+Uses a `running` guard to prevent concurrent runs.
+
+### Proactive Engine — `src/agent/proactive/index.ts`
+
+`startProactiveEngine()` — on boot:
+1. For each active user: `scheduleMorningBriefing(u)` and `scheduleEodReview(u)` (self-rescheduling `setTimeout` chains)
+2. Seven `setInterval` calls for the remaining 7 triggers, each calling `forEachUser(triggerFn)`
+
+`forEachUser(fn)` — re-reads `getActiveUsers()` each tick, runs trigger for each, swallows per-user errors.
+
+---
+
+## 17. Configuration
+
+### Required (app won't start without these)
+
+| Variable | Purpose |
+|----------|---------|
+| `MINIMAX_API_KEY` | MiniMax API key |
+| `MINIMAX_API_HOST` | MiniMax base URL (e.g., `https://api.minimax.chat`) |
+| `COMPOSIO_API_KEY` | Composio API key for OAuth + tool execution |
+| `AGENT_CHAT_IDENTIFIER` | iMessage chat ID that Nudge uses to send (set in Photon SDK) |
+
+### Optional (with defaults)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `QUIET_HOURS_START` | `23` | Hour (0-23) when proactive messages stop |
+| `QUIET_HOURS_END` | `7` | Hour (0-23) when proactive messages resume |
+| `MAX_PROACTIVE_PER_HOUR` | `3` | Rate limit for proactive sends per user |
+| `MORNING_BRIEFING_HOUR` | `8` | Hour for daily morning briefing |
+| `EOD_REVIEW_HOUR` | `18` | Hour for end-of-day review |
+| `PRE_MEETING_MINUTES` | `15` | Minutes before meeting to trigger prep |
+| `LISTENER_PORT` | `3456` | Port for listener bridge HTTP server |
+| `LISTENER_SECRET` | `nudge-demo-2026` | Bearer token for listener bridge auth |
+
+### Hardcoded intervals (in config.ts)
+
+| Constant | Value | Used for |
+|----------|-------|---------|
+| `CALENDAR_POLL_MS` | 5 min | preMeetingPrep, followUpReminder, crossSourcePairing |
+| `EMAIL_POLL_MS` | 10 min | emailAlert, emailEscalation |
+| `MESSAGE_BATCH_MS` | 30s | (currently unused in main flow) |
+
+### Listener-only env vars (listener/index.ts)
+
+| Variable | Required | Purpose |
+|----------|---------|---------|
+| `AGENT_URL` | Yes | URL of agent Mac HTTP server |
+| `OWNER_PHONE` | Yes | Owner's phone number |
+| `LISTENER_SECRET` | No | Shared secret, default `nudge-demo-2026` |
+| `IGNORE_CHAT_IDS` | No | Comma-separated chat IDs to skip |
+
+---
+
+## 18. Development
+
+### Starting
+
 ```bash
-bun run test:1-config      # Config loading
-bun run test:2-db          # Database initialization
-bun run test:3-llm         # LLM generation
-bun run test:4-tts          # TTS generation
-bun run test:5-composio     # Composio mock mode check
-bun run test:6-gmail        # Gmail pull
-bun run test:7-calendar     # Calendar pull
-bun run test:8-personality  # Voice validation
-bun run testbench           # Full test suite
+npm start         # runs: npx tsx src/index.ts
+npm run dev       # same
 ```
 
-**Note**: Database tests require `npx tsx` (not bun) due to better-sqlite3.
+Do NOT use `bun run src/index.ts` — `better-sqlite3` is a native Node module and doesn't work with Bun's runtime. Test scripts use `bun` for everything except DB-related tests.
 
-## Configuration Best Practices
+### Testing
 
-1. **API Keys**: Use `.env` file, never commit
-2. **Quiet Hours**: Set start/end to prevent late-night proactives
-3. **Poll Intervals**: Balance freshness vs. API costs
-4. **Max Users**: 6 user limit for quality control
-5. **Proactive Rate**: 3/hour prevents spam while staying helpful
+```bash
+npm run test:1-config     # validates env vars load
+npm run test:2-db         # opens SQLite, lists tables
+npm run test:3-llm        # calls MiniMax: "say hello in 3 words"
+npm run test:5-composio   # checks mock mode status
+npm run test:6-gmail      # pulls 3 unread emails
+npm run test:7-calendar   # pulls today's events
+npm run test:8-personality # validates voice filtering
+```
 
-## Development Guidelines
+Note: `test:4-tts` prints "TTS archived — skipped" (TTS removed from codebase).
 
-- **Config Keys**: Always SCREAMING_SNAKE (e.g., `config.MINIMAX_API_KEY`)
-- **Tool Calling**: Pull data before giving advice
-- **Validation**: All LLM responses MUST go through `validateResponse()`
-- **Error Handling**: Graceful degradation, never crash the main loop
-- **User Scoping**: Most functions take `userId` for multi-user safety
-- **Proactive Gates**: Always check dedup + rate limits before sending
-- **Onboarding**: Funnel users, don't just help everyone immediately
+### Demo mode
 
-## Dependencies
+```
+/demo                  → enable demo mode (skips OAuth check in onboarding)
+/time 8:00             → pretend it's 8am (triggers morning voice, fires time_change evaluate)
+/time 14:30            → pretend it's 2:30pm (afternoon voice)
+/priority              → show ranked task plan
+/important             → housekeeping check across all sources
+/poll                  → manually fire decision engine
+/reset                 → wipe all data, start over
+```
 
-- **@photon-ai/imessage-kit** - iMessage SDK
-- **better-sqlite3** - SQLite database
-- **composio-core** - OAuth + tool orchestration
-- **openai** - LLM client
-- **dotenv** - Environment variables
-- **uuid** - ID generation
+### Debugging tips
+
+- All modules prefix logs: `[sdk]`, `[handler]`, `[proactive]`, `[extractor]`, `[crossref]`, `[server]`, `[db]`, `[composio]`, `[calendar]`, `[gmail]`, `[llm]`
+- `[handler] tools: get_calendar, get_tasks` — shows which tools were called per message
+- `[server] decision engine: send (urgency 8 > disruption 2)` — shows proactive evaluation result
+- `[batcher] chat123: queued "hey" (2 in batch)` — shows batching in action
+- Composio mock mode: if `isMockMode()` is true, all calendar/email calls return empty — check `COMPOSIO_API_KEY`
+- Virtual time via `/time` affects: `getTemporalVoice()`, `proactive/decision-engine.ts:scoreDisruption()`, `ranking.ts:deadlineScore()`, `context.ts:fmtSituation()`, `triggers-scheduled.ts:scheduleMorningBriefing/scheduleEodReview()`
+
+### Key invariants
+
+- All LLM responses go through `validateResponse()` before sending (except drafts → `validateDraft()`)
+- All proactive sends check dedup (`wasRecentlySent`, 48hr window) before sending
+- All tasks use `INSERT OR IGNORE` — description-level dedup via uuid prevents exact re-adds
+- `userId` scoping: most DB functions accept `userId?` for multi-user safety; `undefined` = unscoped query across all users
+- `better-sqlite3` is synchronous — DB calls never need `await`
+- The `server.ts` uses `Bun.serve` not Node's `http` — this is the one Bun-specific piece in the codebase (isolated to server.ts)

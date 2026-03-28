@@ -85,8 +85,20 @@ const JARGON_WORDS = [
 
 const fillerRe = new RegExp(`\\b(${[...FILLER_WORDS, ...JARGON_WORDS].join('|')})\\b`, 'gi');
 
+// Dead giveaway AI openers — if these slip through the prompt, nuke the whole opener
+const AI_OPENERS = [
+  /^i'?d be happy to\b[^.!?\n]*/i,
+  /^i'?d love to help\b[^.!?\n]*/i,
+  /^let me help you\b[^.!?\n]*/i,
+  /^as an? ai\b[^.!?\n]*/i,
+  /^as a language model\b[^.!?\n]*/i,
+];
+
 export function validateResponse(text: string): string {
   let r = text.toLowerCase();
+
+  // Nuke AI openers (strip the whole opening clause, not just the phrase)
+  for (const pat of AI_OPENERS) r = r.replace(pat, '').trim();
 
   // Drop filler/jargon words (safe to remove individually)
   r = r.replace(fillerRe, '');
