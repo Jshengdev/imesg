@@ -106,4 +106,314 @@ describe("Test Bench", () => {
       console.log("TOOLS OK:", names.join(", "));
     });
   });
+
+  describe("10. Task Ranking System", () => {
+    test("should rank hard-deadline-tomorrow tasks above no-deadline tasks", () => {
+      const { rankTasks } = require("../agent/ranking");
+      
+      const now = new Date();
+      const tomorrow = new Date(now.getTime() + 20 * 60 * 60 * 1000); // 20 hours from now
+      
+      const tasks = [
+        {
+          id: "t1",
+          description: "Task with no deadline",
+          estimated_minutes: 30,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 3,
+          status: "open"
+        },
+        {
+          id: "t2",
+          description: "Hard deadline tomorrow",
+          estimated_minutes: 30,
+          deadline: tomorrow.toISOString(),
+          deadline_confidence: "hard",
+          urgency: 3,
+          status: "open"
+        }
+      ];
+
+      const freeBlocks = [
+        { start: new Date(now.getTime() + 60 * 60 * 1000), end: new Date(now.getTime() + 2 * 60 * 60 * 1000), durationMin: 60 }
+      ];
+
+      const ranked = rankTasks(tasks, freeBlocks, now);
+      
+      console.log("RANKED TASKS:");
+      ranked.forEach((t, i) => {
+        console.log(`${i + 1}. ${t.description} - Score: ${t.score.toFixed(2)}, Deadline: ${t.deadline || "none"}`);
+      });
+      
+      expect(ranked[0].id).toBe("t2");
+      expect(ranked[0].deadline).not.toBeNull();
+      expect(ranked[1].id).toBe("t1");
+      expect(ranked[1].deadline).toBeNull();
+      console.log("✓ Hard-deadline-tomorrow task ranked above no-deadline task");
+    });
+
+    test("should place blocked tasks at the bottom", () => {
+      const { rankTasks } = require("../agent/ranking");
+      
+      const now = new Date();
+      
+      const tasks = [
+        {
+          id: "t1",
+          description: "Normal task",
+          estimated_minutes: 30,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 3,
+          status: "open",
+          depends_on: null
+        },
+        {
+          id: "t2",
+          description: "Blocked task (waiting for t3)",
+          estimated_minutes: 30,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 3,
+          status: "open",
+          depends_on: "t3"
+        }
+      ];
+
+      const freeBlocks = [
+        { start: new Date(now.getTime() + 60 * 60 * 1000), end: new Date(now.getTime() + 2 * 60 * 60 * 1000), durationMin: 60 }
+      ];
+
+      const ranked = rankTasks(tasks, freeBlocks, now);
+      
+      console.log("RANKED TASKS:");
+      ranked.forEach((t, i) => {
+        console.log(`${i + 1}. ${t.description} - Score: ${t.score.toFixed(2)}, Blocked: ${t.blocked}`);
+      });
+      
+      expect(ranked[0].id).toBe("t1");
+      expect(ranked[0].blocked).toBe(false);
+      expect(ranked[1].id).toBe("t2");
+      expect(ranked[1].blocked).toBe(true);
+      console.log("✓ Blocked task placed at the bottom");
+    });
+
+    test("should rank 24-48hr deadlines higher than further deadlines", () => {
+      const { rankTasks } = require("../agent/ranking");
+      
+      const now = new Date();
+      const in36Hours = new Date(now.getTime() + 36 * 60 * 60 * 1000);
+      const in72Hours = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+      
+      const tasks = [
+        {
+          id: "t1",
+          description: "Task with far deadline (72hr)",
+          estimated_minutes: 30,
+          deadline: in72Hours.toISOString(),
+          deadline_confidence: "hard",
+          urgency: 3,
+          status: "open",
+          depends_on: null
+        },
+        {
+          id: "t2",
+          description: "Task with near deadline (36hr)",
+          estimated_minutes: 30,
+          deadline: in36Hours.toISOString(),
+          deadline_confidence: "hard",
+          urgency: 3,
+          status: "open",
+          depends_on: null
+        }
+      ];
+
+      const freeBlocks = [
+        { start: new Date(now.getTime() + 60 * 60 * 1000), end: new Date(now.getTime() + 2 * 60 * 60 * 1000), durationMin: 60 }
+      ];
+
+      const ranked = rankTasks(tasks, freeBlocks, now);
+      
+      console.log("RANKED TASKS:");
+      ranked.forEach((t, i) => {
+        console.log(`${i + 1}. ${t.description} - Score: ${t.score.toFixed(2)}`);
+      });
+      
+      expect(ranked[0].id).toBe("t2");
+      expect(ranked[1].id).toBe("t1");
+      console.log("✓ 36hr deadline task ranked above 72hr deadline task");
+    });
+
+    test("should prioritize tasks that fit in next free block", () => {
+      const { rankTasks } = require("../agent/ranking");
+      
+      const now = new Date();
+      const nextHour = new Date(now.getTime() + 60 * 60 * 1000);
+      const nextBlockEnd = new Date(nextHour.getTime() + 45 * 60 * 1000);
+      
+      const tasks = [
+        {
+          id: "t1",
+          description: "Long task (60min) - won't fit next 45min block",
+          estimated_minutes: 60,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 3,
+          status: "open",
+          depends_on: null
+        },
+        {
+          id: "t2",
+          description: "Short task (30min) - fits next 45min block",
+          estimated_minutes: 30,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 3,
+          status: "open",
+          depends_on: null
+        }
+      ];
+
+      const freeBlocks = [
+        { start: nextHour, end: nextBlockEnd, durationMin: 45 },
+        { start: new Date(nextBlockEnd.getTime() + 60 * 60 * 1000), end: new Date(nextBlockEnd.getTime() + 3 * 60 * 60 * 1000), durationMin: 120 }
+      ];
+
+      const ranked = rankTasks(tasks, freeBlocks, now);
+      
+      console.log("RANKED TASKS:");
+      ranked.forEach((t, i) => {
+        console.log(`${i + 1}. ${t.description} - Score: ${t.score.toFixed(2)}, Fits Next Block: ${t.fits_next_block}`);
+      });
+      
+      expect(ranked[0].id).toBe("t2");
+      expect(ranked[0].fits_next_block).toBe(true);
+      expect(ranked[1].id).toBe("t1");
+      expect(ranked[1].fits_next_block).toBe(false);
+      console.log("✓ Task fitting in next block ranked higher");
+    });
+
+    test("should format ranked plan with time slots", () => {
+      const { rankTasks, formatRankedPlan } = require("../agent/ranking");
+      
+      const now = new Date();
+      const nextHour = new Date(now.getTime() + 60 * 60 * 1000);
+      const nextBlockEnd = new Date(nextHour.getTime() + 90 * 60 * 1000);
+      
+      const tasks = [
+        {
+          id: "t1",
+          description: "Task A",
+          estimated_minutes: 30,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 3,
+          status: "open",
+          depends_on: null
+        },
+        {
+          id: "t2",
+          description: "Task B",
+          estimated_minutes: 30,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 3,
+          status: "open",
+          depends_on: null
+        }
+      ];
+
+      const freeBlocks = [
+        { start: nextHour, end: nextBlockEnd, durationMin: 90 }
+      ];
+
+      const ranked = rankTasks(tasks, freeBlocks, now);
+      const plan = formatRankedPlan(ranked, freeBlocks);
+      
+      console.log("FORMATTED PLAN:");
+      console.log(plan);
+      
+      expect(plan).toContain("Task A");
+      expect(plan).toContain("Task B");
+      expect(plan).toContain("30min");
+      console.log("✓ Formatted plan contains task descriptions and durations");
+    });
+
+    test("should handle mixed scenario with all ranking factors", () => {
+      const { rankTasks } = require("../agent/ranking");
+      
+      const now = new Date();
+      const tomorrow = new Date(now.getTime() + 20 * 60 * 60 * 1000);
+      const in36Hours = new Date(now.getTime() + 36 * 60 * 60 * 1000);
+      
+      const tasks = [
+        {
+          id: "t1",
+          description: "Low urgency, no deadline",
+          estimated_minutes: 30,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 1,
+          status: "open",
+          depends_on: null
+        },
+        {
+          id: "t2",
+          description: "High urgency, hard deadline tomorrow",
+          estimated_minutes: 30,
+          deadline: tomorrow.toISOString(),
+          deadline_confidence: "hard",
+          urgency: 5,
+          status: "open",
+          depends_on: null
+        },
+        {
+          id: "t3",
+          description: "Medium urgency, 36hr deadline",
+          estimated_minutes: 30,
+          deadline: in36Hours.toISOString(),
+          deadline_confidence: "soft",
+          urgency: 3,
+          status: "open",
+          depends_on: null
+        },
+        {
+          id: "t4",
+          description: "Blocked task",
+          estimated_minutes: 30,
+          deadline: null,
+          deadline_confidence: null,
+          urgency: 5,
+          status: "open",
+          depends_on: "t999"
+        }
+      ];
+
+      const freeBlocks = [
+        { start: new Date(now.getTime() + 60 * 60 * 1000), end: new Date(now.getTime() + 3 * 60 * 60 * 1000), durationMin: 120 }
+      ];
+
+      const ranked = rankTasks(tasks, freeBlocks, now);
+      
+      console.log("\nMIXED SCENARIO - ALL RANKING FACTORS:");
+      console.log("=".repeat(60));
+      ranked.forEach((t, i) => {
+        console.log(`${i + 1}. ${t.description}`);
+        console.log(`   Score: ${t.score.toFixed(2)} | Deadline: ${t.deadline || "none"} | Blocked: ${t.blocked}`);
+      });
+      console.log("=".repeat(60));
+      
+      expect(ranked[0].id).toBe("t2");
+      expect(ranked[0].blocked).toBe(false);
+      
+      const blockedIndex = ranked.findIndex(t => t.blocked);
+      expect(blockedIndex).toBe(ranked.length - 1);
+      expect(ranked[ranked.length - 1].id).toBe("t4");
+      
+      console.log("✓ High-urgency hard-deadline task ranked first");
+      console.log("✓ Blocked task placed at the bottom");
+      console.log("✓ Tasks sorted by descending score");
+    });
+  });
 });

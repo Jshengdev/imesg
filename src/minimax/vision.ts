@@ -7,6 +7,15 @@ const MIME: Record<string, string> = {
   ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
 };
 
+const VISION_PROMPT = `extract everything actionable from this image. it could be:
+- assignment rubric (extract: items, percentages, deadlines, requirements)
+- screenshot of a conversation (extract: who said what, any asks or deadlines)
+- schedule or syllabus (extract: dates, events, deadlines)
+- notes or whiteboard (extract: key points, action items)
+- receipt or document (extract: amounts, dates, relevant details)
+
+return the extracted info as plain text, structured clearly. include specific numbers, dates, names, and percentages. if you see deadlines, state them explicitly.`;
+
 export async function analyzeImage(imagePath: string): Promise<string> {
   try {
     const buf = await readFile(imagePath);
@@ -18,7 +27,7 @@ export async function analyzeImage(imagePath: string): Promise<string> {
       messages: [{
         role: "user",
         content: [
-          { type: "text", text: "Describe this image in detail. What do you see?" },
+          { type: "text", text: VISION_PROMPT },
           { type: "image_url", image_url: { url: dataUri } },
         ],
       }],

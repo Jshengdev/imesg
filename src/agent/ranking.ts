@@ -55,11 +55,13 @@ function dependencyClearScore(dependsOn: string | null, allTasks: any[]): number
   if (!dependsOn) return 3;
 
   const depIds = dependsOn.split(",").map(s => s.trim()).filter(Boolean);
-  const openDeps = depIds.filter(id =>
-    allTasks.some(t => t.id === id && t.status === "open")
-  );
+  
+  const unmetDeps = depIds.filter(id => {
+    const depTask = allTasks.find(t => t.id === id);
+    return !depTask || depTask.status !== "completed";
+  });
 
-  return openDeps.length > 0 ? -100 : 3;
+  return unmetDeps.length > 0 ? -100 : 3;
 }
 
 export function rankTasks(tasks: any[], freeBlocks: FreeBlock[], currentTime?: Date): RankedTask[] {

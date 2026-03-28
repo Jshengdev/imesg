@@ -1,7 +1,7 @@
 import { generate, generateJSON, generateWithTools } from "../minimax/llm";
 import { analyzeImage } from "../minimax/vision";
 import { sendText, sendBubbles, type NormalizedMessage } from "../imessage/sdk";
-import { logAgent, resetDatabase, registerUser, getUserByPhone, getActiveUsers, updateUser } from "../memory/db";
+import { logAgent, resetDatabase, registerUser, getUserByPhone, getActiveUsers, updateUser, getTaskQueue, getTasksWithDetails, completeTaskByDescription, getDependentTasks } from "../memory/db";
 import { checkUserConnected, getOAuthLinks } from "../integrations/composio";
 import { SYSTEM_PROMPT, POST_HISTORY_ENFORCEMENT, validateResponse, validateDraft, getTemporalVoice } from "./personality";
 import { TOOL_DEFS, createToolExecutor } from "./tools";
@@ -9,6 +9,10 @@ import { splitIntoBubbles } from "../imessage/bubble-split";
 import { MessageBatcher } from "../imessage/batcher";
 import { analyzeCalendar } from "../integrations/calendar";
 import { analyzeGmail } from "../integrations/gmail";
+import { setDemoMode, isDemoMode, setVirtualTime, nowDate } from "../demo";
+import { evaluate } from "./proactive/decision-engine";
+import { rankTasks, formatRankedPlan } from "./ranking";
+import { getCachedInsights } from "./crossref";
 
 // --- Onboarding state ---
 
@@ -89,7 +93,8 @@ async function handleOnboarding(msg: NormalizedMessage): Promise<boolean> {
 
   // Waiting for OAuth completion
   if (stage === "waiting_oauth") {
-    const status = await checkUserConnected(phone);
+    // In demo mode, skip OAuth wait — assume already connected
+    const status = isDemoMode() ? { gmail: true, calendar: true } : await checkUserConnected(phone);
     if (status.gmail || status.calendar) {
       updateUser(phone, { onboard_stage: "active" });
       const name = user?.name || "friend";
@@ -226,6 +231,8 @@ export function classifyIntent(text: string): string {
 async function processMessage(msg: NormalizedMessage): Promise<void> {
   const replyTo = msg.chatId;
   const phone = msg.sender || msg.chatId;
+  const user = getUserByPhone(phone);
+  const userId = user?.id;
 
   // /reset
   if (/^\/?reset$/i.test(msg.text?.trim() || "")) {
@@ -238,6 +245,77 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
     return;
   }
 
+  const text = msg.text?.trim() || "";
+
+  // /demo — enable demo mode, pre-cache data
+  if (/^\/?demo$/i.test(text)) {
+    setDemoMode(true);
+    analyzeCalendar(phone).catch(() => {});
+    analyzeGmail(phone).catch(() => {});
+    await sendText(replyTo, "demo mode on");
+    return;
+  }
+
+  // /time HH:MM — set virtual clock, trigger proactive engine
+  const timeMatch = text.match(/^\/?time\s+(\d{1,2}):(\d{2})$/i);
+  if (timeMatch) {
+    const h = parseInt(timeMatch[1]), m = parseInt(timeMatch[2]);
+    const t = setVirtualTime(h, m);
+    const label = t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    await sendText(replyTo, `time set to ${label.toLowerCase()}`);
+    if (userId) {
+      const result = await evaluate("time_change", userId, replyTo, phone, `time jumped to ${label}`);
+      console.log(`[handler] /time → engine: ${result.action} (${result.reason})`);
+    }
+    return;
+  }
+
+  // /important — housekeeping scan
+  if (/^\/?important$/i.test(text)) {
+    const [cal, gmail] = await Promise.all([analyzeCalendar(phone), analyzeGmail(phone)]);
+    const tasks = getTaskQueue(userId);
+    const crossInsights = getCachedInsights();
+    const prompt = `housekeeping check. compare current tasks against latest email and calendar. flag contradictions, new deadlines, or anything pressing.\n\ntasks: ${tasks.slice(0, 10).map((t: any) => t.description).join("; ")}\nemail: ${gmail.insights}\ncalendar: ${cal.insights}\ncross-ref: ${crossInsights}`;
+    const system = SYSTEM_PROMPT.replace("{context}", "") + `\ntone: ${getTemporalVoice()}` + `\n\n${POST_HISTORY_ENFORCEMENT}`;
+    const raw = await generate(system, prompt);
+    const response = validateResponse(raw);
+    if (response.length > 5) {
+      await sendBubbles(replyTo, splitIntoBubbles(response));
+    } else {
+      await sendText(replyTo, "checked everything. nothing new rn");
+    }
+    logAgent({ direction: "out", content: response }, userId);
+    return;
+  }
+
+  // /priority — ranked task plan
+  if (/^\/?priority$/i.test(text)) {
+    const tasks = getTasksWithDetails(userId);
+    const cal = await analyzeCalendar(phone);
+    const ranked = rankTasks(tasks, cal.freeBlocks);
+    const plan = formatRankedPlan(ranked, cal.freeBlocks);
+    const system = SYSTEM_PROMPT.replace("{context}", `current priority plan:\n${plan}`) + `\ntone: ${getTemporalVoice()}` + `\n\n${POST_HISTORY_ENFORCEMENT}`;
+    const raw = await generate(system, "give the priority breakdown. be specific about times, order, and why");
+    const response = validateResponse(raw);
+    await sendBubbles(replyTo, splitIntoBubbles(response));
+    logAgent({ direction: "out", content: response }, userId);
+    return;
+  }
+
+  // /poll — force check all channels
+  if (/^\/?poll$/i.test(text)) {
+    if (userId) {
+      const result = await evaluate("manual", userId, replyTo, phone, "manual poll — check everything");
+      if (result.action === "silent") {
+        await sendText(replyTo, "checked everything. nothing new rn");
+      }
+      console.log(`[handler] /poll → engine: ${result.action} (${result.reason})`);
+    } else {
+      await sendText(replyTo, "not set up yet. text me to get started");
+    }
+    return;
+  }
+
   // Onboarding
   const handled = await handleOnboarding(msg);
   if (handled) return;
@@ -246,8 +324,16 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
   if (!msg.text && !msg.attachments.length) return;
   if (/^(ok|okay|k|got it|thanks|thx|ty|bet|cool|word|aight|nice)\.?$/i.test(msg.text?.trim() || "")) return;
 
-  const user = getUserByPhone(phone);
-  const userId = user?.id;
+  // Task completion detection
+  const doneMatch = msg.text?.match(/(?:done|finished|completed|knocked out)\s+(?:with\s+)?(?:the\s+)?(.+)/i);
+  if (doneMatch && userId) {
+    const desc = doneMatch[1].trim();
+    const result = completeTaskByDescription(desc, userId);
+    if (result.found) {
+      console.log(`[handler] task completed: "${desc}" → ${result.taskId}`);
+    }
+    // Fall through to normal LLM flow — it will see the updated task list and respond naturally
+  }
 
   logAgent({ direction: "in", content: msg.text }, userId);
 
@@ -305,8 +391,8 @@ export async function handleAgentMessage(msg: NormalizedMessage): Promise<void> 
   const phone = msg.sender || msg.chatId;
   console.log(`[handler] ${phone}: ${msg.text?.slice(0, 60)}`);
 
-  // /reset bypasses batcher (immediate)
-  if (/^\/?reset$/i.test(msg.text?.trim() || "")) {
+  // Commands bypass batcher (immediate)
+  if (/^\/?(?:reset|demo|time|important|priority|poll)\b/i.test(msg.text?.trim() || "")) {
     await processMessage(msg);
     return;
   }

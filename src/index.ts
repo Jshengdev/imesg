@@ -6,6 +6,7 @@ import { handleAgentMessage } from "./agent/handler";
 import { startExtractionLoop } from "./listener/extractor";
 import { startProactiveEngine } from "./agent/proactive";
 import { startCrossRefLoop } from "./agent/crossref";
+import { startServer } from "./server";
 
 console.log("[nudge] starting...");
 
@@ -54,5 +55,6 @@ try {
 try { startExtractionLoop(); } catch (e) { console.error("[nudge] extraction loop failed:", e); }
 try { startProactiveEngine(); } catch (e) { console.error("[nudge] proactive engine failed:", e); }
 try { startCrossRefLoop(); } catch (e) { console.error("[nudge] crossref loop failed:", e); }
+try { startServer(); } catch (e) { console.error("[nudge] HTTP server failed:", e); }
 
 console.log("[nudge] all systems up.");
