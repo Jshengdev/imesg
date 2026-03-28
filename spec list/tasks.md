@@ -1,3 +1,4 @@
+
 # iMessage AI Assistant: Task List
 
 ## Phase 1: Scaffolding (Completed)
@@ -39,3 +40,4 @@
 - [ ] Develop a testing strategy for the entire system.
 - [ ] Refine the prompts used for the MiniMax LLM.
 - [ ] Write a `README.md` with setup and usage instructions.
+- [ ] Run the linter to check for code quality.

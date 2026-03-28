@@ -1,24 +1,9 @@
-import { startListening } from './sdk';
+import { config } from '../config';
+import { NormalizedMessage } from './sdk';
 
-// This will be expanded later to import and call the actual agent and listener handlers
-const agentHandler = (message: any) => {
-  console.log('Agent received:', message);
-};
-
-const listenerHandler = (message: any) => {
-  console.log('Listener received:', message);
-};
-
-export const routeMessage = (message: any) => {
-  // This logic will need to be updated to properly identify the agent thread
-  if (message.chat_id === 'agent_thread_id') { 
-    agentHandler(message);
-  } else {
-    listenerHandler(message);
+export const routeMessage = (msg: NormalizedMessage): 'agent' | 'listener' | 'ignore' => {
+  if (msg.chatId === config.agentChatIdentifier) {
+    return msg.isFromMe ? 'ignore' : 'agent';
   }
-};
-
-export const startRouter = () => {
-  startListening(routeMessage);
-  console.log('iMessage router started...');
+  return 'listener';
 };

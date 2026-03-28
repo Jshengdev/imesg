@@ -101,7 +101,7 @@ class Orchestrator {
     if (description.includes('database') || description.includes('db')) {
         return this.agents.find(agent => agent.name === 'Database Agent');
     }
-    if (description.includes('refinement') || description.includes('testing') || description.includes('error handling')) {
+    if (description.includes('refinement') || description.includes('testing') || description.includes('error handling') || description.includes('lint')) {
         return this.agents.find(agent => agent.name === 'Refinement Agent');
     }
     return undefined;
@@ -113,6 +113,7 @@ class Orchestrator {
 
   // Run the orchestration loop
   async run(): Promise<void> {
+    this.fileModificationTimes.clear();
     await this.loadTasks();
 
     for (const task of this.tasks) {

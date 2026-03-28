@@ -1,39 +1,41 @@
-import OpenAI from 'openai';
-import { config } from '../config';
-import fs from 'fs';
+import { readFile } from "fs/promises";
+import { extname } from "path";
+import { client, stripThinkTags } from "./llm";
 
-const { minimaxApiKey, minimaxApiHost } = config;
-
-const openai = new OpenAI({
-  apiKey: minimaxApiKey,
-  baseURL: `${minimaxApiHost}/v1`,
-});
-
-const imageToBase64 = (filePath: string): string => {
-  const fileBuffer = fs.readFileSync(filePath);
-  return fileBuffer.toString('base64');
+const mimeTypes: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
 };
 
-export const analyzeImage = async (imagePath: string) => {
-  const base64Image = imageToBase64(imagePath);
+export async function analyzeImage(imagePath: string): Promise<string> {
+  try {
+    const buf = await readFile(imagePath);
+    const mime = mimeTypes[extname(imagePath)] ?? "image/jpeg";
+    const dataUri = `data:${mime};base64,${buf.toString("base64")}`;
 
-  const response = await openai.chat.completions.create({
-    model: 'MiniMax-M2.7',
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: 'What is in this image?' },
-          {
-            type: 'image_url',
-            image_url: {
-              url: `data:image/jpeg;base64,${base64Image}`,
+    const res = await client.chat.completions.create({
+      model: "MiniMax-M2.7",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What’s in this image?" },
+            {
+              type: "image_url",
+              image_url: { url: dataUri },
             },
-          },
-        ],
-      },
-    ],
-  });
+          ],
+        },
+      ],
+    });
 
-  return response.choices[0].message.content;
-};
+    const text = res.choices[0].message.content ?? "";
+    return stripThinkTags(text);
+  } catch (err) {
+    console.error(`[vision] failed to analyze image`, err);
+    return "couldn't analyze image";
+  }
+}

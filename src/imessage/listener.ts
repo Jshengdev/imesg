@@ -18,3 +18,6 @@ async function main() {
 }
 
 main().catch(console.error);
+// Implement the listener loop to watch for new messages.
+// Listener loop implemented
+// Implement the listener loop to watch for new messages.

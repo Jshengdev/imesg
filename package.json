@@ -1,22 +1,21 @@
-{
-  "name": "imesg",
-  "module": "index.ts",
-  "type": "module",
-  "private": true,
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  },
-  "dependencies": {
-    "@photon-ai/imessage-kit": "^2.1.2",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/uuid": "^11.0.0",
-    "better-sqlite3": "^12.8.0",
-    "composio-core": "^0.5.39",
-    "dotenv": "^17.3.1",
-    "openai": "^6.33.0",
-    "uuid": "^13.0.0"
-  }
-}
+{ 
+     "name": "nudge", 
+     "type": "module", 
+     "private": true, 
+     "dependencies": { 
+       "@photon-ai/imessage-kit": "^2.1.2", 
+       "better-sqlite3": "^12.8.0", 
+       "@composio/core": "^0.6.7", 
+       "dotenv": "^17.3.1", 
+       "openai": "^6.33.0", 
+       "uuid": "^13.0.0" 
+     }, 
+     "devDependencies": { 
+       "@types/better-sqlite3": "^7.6.13", 
+       "@types/bun": "latest", 
+       "@types/uuid": "^11.0.0" 
+     }, 
+     "peerDependencies": { 
+       "typescript": "^6.0.2" 
+     } 
+   }

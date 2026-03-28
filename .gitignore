@@ -1,7 +1,8 @@
-node_modules
-.env
-.next
-.env*
-.DS_Store
-dist
-build
+node_modules/ 
+data/ 
+audio/ 
+.env 
+*.m4a 
+*.mp3 
+.DS_Store 
+state/logs/
