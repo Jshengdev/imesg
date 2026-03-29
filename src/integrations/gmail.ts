@@ -22,6 +22,7 @@ const SEARCH_KEYS = ["messages", "emails", "threads", "data", "results", "items"
 
 export async function pullUnreadEmails(maxResults = 20, phone?: string): Promise<EmailSummary[]> {
   const raw = await executeWithFallback([
+    { actionName: "GMAIL_FETCH_EMAILS", params: { max_results: maxResults, label_ids: ["INBOX"] } },
     { actionName: "GMAIL_FETCH_EMAILS", params: { max_results: maxResults } },
     { actionName: "GMAIL_FETCH_EMAILS", params: { maxResults, userId: "me" } },
     { actionName: "GMAIL_LIST_THREADS", params: { max_results: maxResults } },
@@ -97,9 +98,9 @@ export async function saveEmailDraft(
   if (isMockMode()) return { success: false, message: "composio offline — can't save draft" };
 
   const strategies = [
+    { actionName: "GMAIL_CREATE_EMAIL_DRAFT", params: { to, subject, body, userId: "me" } },
+    { actionName: "GMAIL_CREATE_EMAIL_DRAFT", params: { to, subject, body } },
     { actionName: "GMAIL_CREATE_DRAFT", params: { to, subject, body, userId: "me" } },
-    { actionName: "GMAIL_DRAFTS_CREATE", params: { to, subject, body } },
-    { actionName: "GMAIL_CREATE_DRAFT", params: { message: { to, subject, body } } },
   ];
 
   try {

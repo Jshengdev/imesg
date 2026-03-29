@@ -127,3 +127,59 @@ export async function runExtractionOnce(userId?: string): Promise<number> {
   console.log(`[extractor] on-demand: ${msgs.length} msgs → ${result.tasks.length} tasks, ${result.people.length} people`);
   return result.tasks.length;
 }
+
+// --- Extract tasks from email data (called during reveal + email pull) ---
+
+const EMAIL_TASK_PROMPT = `Extract tasks and action items from these emails. Return JSON:
+{
+  "tasks": [{
+    "description": "specific task — what needs to be done",
+    "assigned_by": "sender name",
+    "deadline": "date string or null",
+    "urgency": 1-5,
+    "estimated_minutes": number,
+    "effort_level": "quick" or "focused" or "deep",
+    "deadline_source": "explicit" or "inferred" or "professor" or "teammate",
+    "deadline_confidence": "hard" or "soft" or "inferred"
+  }]
+}
+
+Rules:
+- every "can you", "please", "need you to", "by [date]" = a task
+- "review my section" → 30min, focused
+- "revise chapter" → 90-120min, deep
+- "submit hours log" → 15min, quick
+- "send slides" → 30-60min, focused
+- urgency 5 = hard deadline < 48hr, 4 = this week, 3 = next week, 2 = soft, 1 = whenever
+- be specific with descriptions — include the actual ask, who asked, and what it's for
+- return valid JSON only`;
+
+export async function extractTasksFromEmails(
+  emails: { from: string; subject: string; snippet: string }[],
+  userId?: string,
+): Promise<number> {
+  if (!emails.length) return 0;
+  try {
+    const text = emails.map(e => `From: ${e.from}\nSubject: ${e.subject}\n${e.snippet}`).join("\n---\n");
+    const result = await generateJSON(EMAIL_TASK_PROMPT, text);
+    const tasks = Array.isArray(result.tasks) ? result.tasks : [];
+    if (tasks.length) {
+      storeTasks(tasks.map(t => ({
+        source: "email",
+        description: t.description,
+        assigned_by: t.assigned_by,
+        deadline: t.deadline,
+        urgency: t.urgency,
+        estimated_minutes: t.estimated_minutes,
+        effort_level: t.effort_level,
+        deadline_source: t.deadline_source,
+        deadline_confidence: t.deadline_confidence,
+      })), userId);
+      console.log(`[extractor] emails → ${tasks.length} tasks extracted`);
+    }
+    return tasks.length;
+  } catch (err) {
+    console.error("[extractor] email extraction failed:", err instanceof Error ? err.message : err);
+    return 0;
+  }
+}

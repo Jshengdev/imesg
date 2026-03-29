@@ -74,6 +74,7 @@ given:
 - current tasks (ranked): {tasks}
 - calendar: {calendar}
 - recent conversation: {conversation}
+- what you already told them recently: {priorMessages}
 - current time: {time}
 
 return JSON:
@@ -91,11 +92,14 @@ urgency guide:
 - 3-4: routine check, nothing pressing
 - 1-2: nothing actionable
 
-rules for the message:
+CRITICAL rules:
+- check what you already told them (above). if you already said it, DO NOT repeat it
+- if nothing new since last message: should_send = false
+- if the only change is a deadline getting closer: short and calm — "same as before, just watch out for [X] tomorrow"
 - max 2 sentences. usually 1
 - be specific — use names, times, subjects
-- if nothing interesting, say so honestly
-- don't send just to send. silence > noise`;
+- don't send just to send. silence > noise
+- only send if there is genuinely NEW information or a deadline that just became urgent`;
 
 export async function evaluate(
   trigger: string,
@@ -123,6 +127,13 @@ export async function evaluate(
 
     const disruption = scoreDisruption(cal);
 
+    // Get what we already told them recently
+    const priorOutgoing = conversation
+      .filter(c => c.direction === "out")
+      .slice(0, 5)
+      .map(c => c.content.slice(0, 100))
+      .join("\n");
+
     // Build prompt
     const prompt = DECISION_PROMPT
       .replace("{trigger}", trigger)
@@ -130,6 +141,7 @@ export async function evaluate(
       .replace("{tasks}", ranked.slice(0, 5).map(t => `${t.description} (urgency ${t.urgency}, ${t.estimated_minutes}min${t.deadline ? `, due ${t.deadline}` : ""})`).join("; "))
       .replace("{calendar}", cal.insights || "no calendar data")
       .replace("{conversation}", conversation.map(c => `${c.direction}: ${c.content.slice(0, 60)}`).join("\n") || "none")
+      .replace("{priorMessages}", priorOutgoing || "nothing yet — first message")
       .replace("{time}", currentTime.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }));
 
     const result = await generateJSON(

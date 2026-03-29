@@ -10,10 +10,11 @@ import { MessageBatcher } from "../imessage/batcher";
 import { analyzeCalendar } from "../integrations/calendar";
 import { analyzeGmail } from "../integrations/gmail";
 import { setDemoMode, isDemoMode, setVirtualTime, now } from "../demo";
+import { enableDemoMode, seedTasksForUser, DEMO_EMAILS, DEMO_CALENDAR, DEMO_FREE_BLOCKS } from "../demo-seed";
 import { evaluate } from "./proactive/decision-engine";
 import { rankTasks, formatRankedPlan } from "./ranking";
 import { getCachedInsights } from "./crossref";
-import { runExtractionOnce } from "../listener/extractor";
+import { runExtractionOnce, extractTasksFromEmails } from "../listener/extractor";
 
 // --- Onboarding state ---
 
@@ -104,15 +105,33 @@ async function handleOnboarding(msg: NormalizedMessage): Promise<boolean> {
       await sendText(msg.chatId, "give me a sec to look around...");
       await sleep(2500);
 
+      // In demo mode, seed tasks + people immediately
+      if (isDemoMode() && userId) {
+        seedTasksForUser(userId);
+      }
+
       // Post-OAuth reveal — 3 beats: clock → got you → positioning
       try {
-        const [cal, gmail] = await Promise.allSettled([
-          analyzeCalendar(phone),
-          analyzeGmail(phone),
-        ]);
+        // Use demo data if available, otherwise pull live
+        let calData: string;
+        let emailData: string;
 
-        const calData = cal.status === "fulfilled" ? cal.value.insights : "no calendar data yet";
-        const emailData = gmail.status === "fulfilled" ? gmail.value.insights : "no email data yet";
+        if (isDemoMode()) {
+          emailData = DEMO_EMAILS.map(e => `${e.from}: ${e.subject} — ${e.snippet}`).join("\n");
+          calData = DEMO_CALENDAR.map(e => `${e.start}-${e.end}: ${e.title}${e.attendees.length ? ` (with ${e.attendees.join(", ")})` : ""}`).join("\n");
+        } else {
+          const [cal, gmail] = await Promise.allSettled([
+            analyzeCalendar(phone),
+            analyzeGmail(phone),
+          ]);
+          calData = cal.status === "fulfilled" ? cal.value.insights : "no calendar data yet";
+          emailData = gmail.status === "fulfilled" ? gmail.value.insights : "no email data yet";
+
+          // Extract tasks from emails
+          if (gmail.status === "fulfilled" && gmail.value.emails.length) {
+            extractTasksFromEmails(gmail.value.emails, userId).catch(() => {});
+          }
+        }
 
         // Beat 1: "Clock you" — sharp read on who they are
         const revealPrompt = REVEAL_PROMPT
@@ -259,14 +278,17 @@ when to use tools:
 - user asks about email/inbox → get_emails
 - user asks what to focus on or what's pending → get_tasks
 - user mentions a person by name → get_person
-- user asks to draft/write/reply to an email → get_emails first, then save_email_draft
+- user asks to draft/write/reply to an email → MUST call get_emails first to find the sender's email address, then MUST call save_email_draft with to, subject, body. do NOT say "draft saved" without actually calling save_email_draft
+- user asks to send an email → MUST call send_email with to, subject, body
+- user wants to block calendar time → MUST call block_time with title and duration
 - when connecting dots across sources → get_cross_insights
 - when you need context on prior conversation → get_conversation
 
-rules:
+CRITICAL rules:
+- NEVER say you did something without calling the tool. if you say "draft saved" you MUST have called save_email_draft. if you say "blocked" you MUST have called block_time
 - save_email_draft saves a draft, does NOT send. never say you sent anything
 - pull data before giving advice. don't make up events or emails
-- you can call multiple tools
+- you can call multiple tools in sequence
 - keep your final response short — the tools give you info, you still text like a friend`;
 
 // --- Main handler (called by batcher or directly) ---
@@ -302,11 +324,9 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
     return;
   }
 
-  // /demo — enable demo mode, pre-cache data
+  // /demo — enable demo mode, bouncer still runs naturally
   if (/^\/?demo$/i.test(text)) {
-    setDemoMode(true);
-    analyzeCalendar(phone).catch(() => {});
-    analyzeGmail(phone).catch(() => {});
+    enableDemoMode();
     await sendText(replyTo, "demo mode on");
     return;
   }
@@ -318,7 +338,25 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
     const t = setVirtualTime(h, m);
     const label = t.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
     await sendText(replyTo, `time set to ${label.toLowerCase()}`);
-    if (userId) {
+    await sleep(1500);
+
+    if (isDemoMode() && userId) {
+      // In demo mode, generate a context-aware proactive message using seeded tasks
+      const tasks = getTaskQueue(userId);
+      const taskList = tasks.slice(0, 6).map((t: any) => `- ${t.description} (urgency ${t.urgency}, ~${t.estimated_minutes}min, due: ${t.deadline || "no deadline"})`).join("\n");
+
+      const timePrompt = `you're nudge. the time is now ${label}. here are the user's tasks:\n${taskList}\n\ncalendar context:\n- NVSC Venture Comp Training: 9:00 AM - 12:30 PM\n- Trae.ai x MiniMax Hackathon: 10:00 AM - 10:00 PM\n- COMM 410 Class: 2:00 PM - 3:30 PM\n- Devpost hackathon submission due: 6:30 PM\n\nbased on the current time, send a proactive message:\n- flag any deadline that's < 60 min away with urgency\n- after flagging the immediate thing, mention what comes AFTER and suggest blocking specific time for it\n- if offering to block time, say "want me to block [time range] for [task]?" so they can just say yes\n- be specific with times, not vague\n- 2-3 sentences max, casual, lowercase`;
+
+      const system = buildSystem("");
+      const raw = await generate(system, timePrompt);
+      const response = validateResponse(raw);
+      const isAction = tasks.some((t: any) => t.urgency >= 4);
+      const label2 = isAction ? "🚨 this one's a real one —" : "heads up, quick update —";
+      await sendText(replyTo, label2);
+      await sleep(800);
+      await sendBubbles(replyTo, splitIntoBubbles(response));
+      logAgent({ direction: "out", content: `[time_${label}] ${response}` }, userId);
+    } else if (userId) {
       const result = await evaluate("time_change", userId, replyTo, phone, `time jumped to ${label}`);
       console.log(`[handler] /time → engine: ${result.action} (${result.reason})`);
     }
@@ -340,14 +378,30 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
     return;
   }
 
-  // /priority — ranked task plan
+  // /priority — ranked task plan with calendar blocking offer
   if (/^\/?priority$/i.test(text)) {
     const tasks = getTasksWithDetails(userId);
-    const cal = await analyzeCalendar(phone);
-    const ranked = rankTasks(tasks, cal.freeBlocks);
-    const plan = formatRankedPlan(ranked, cal.freeBlocks);
-    const system = buildSystem(`current priority plan:\n${plan}`);
-    const raw = await generate(system, "give the priority breakdown. be specific about times, order, and why");
+    if (!tasks.length) {
+      await sendText(replyTo, "no tasks yet — text me what you're working on or send me a screenshot and i'll build your list");
+      return;
+    }
+    let cal;
+    try {
+      cal = await analyzeCalendar(phone);
+    } catch {
+      cal = { events: [], freeBlocks: [], insights: "", actionItems: [], tags: [] };
+    }
+    const ranked = rankTasks(tasks, cal.freeBlocks || []);
+    const plan = formatRankedPlan(ranked, cal.freeBlocks || []);
+    // Use demo free blocks as fallback if live calendar is empty
+    const hasLiveBlocks = (cal.freeBlocks || []).length > 0;
+    const freeBlockSummary = hasLiveBlocks
+      ? cal.freeBlocks.map((b: any) => `${b.start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}-${b.end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} (${b.durationMin}min)`).join(", ")
+      : isDemoMode()
+        ? DEMO_FREE_BLOCKS.map(b => `${b.label} (${b.durationMin}min)`).join(", ")
+        : "no free blocks today";
+    const system = buildSystem(`current priority plan:\n${plan}\n\nfree blocks: ${freeBlockSummary}`);
+    const raw = await generate(system, "list the top 5 tasks in order. for each one: task name, how long it takes, and when its due. keep each one to ONE short line. at the end ask 'want me to block these off on your calendar?' — thats it, no extra commentary");
     const response = validateResponse(raw);
     await sendBubbles(replyTo, splitIntoBubbles(response));
     logAgent({ direction: "out", content: response }, userId);
@@ -358,8 +412,8 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
   if (/^\/?poll$/i.test(text)) {
     if (userId) {
       const result = await evaluate("manual", userId, replyTo, phone, "manual poll — check everything");
-      if (result.action === "silent") {
-        await sendText(replyTo, "checked everything. nothing new rn");
+      if (result.action === "silent" || result.action === "queue") {
+        await sendText(replyTo, "checked everything — nothing new since last time, you're good");
       }
       console.log(`[handler] /poll → engine: ${result.action} (${result.reason})`);
     } else {
@@ -396,20 +450,45 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
     const system = buildSystem(userContext);
 
     let userContent = msg.text;
-    const imageAtt = msg.attachments.find(a => /\.(jpe?g|png|gif|webp)$/i.test(a.path));
-    if (imageAtt) {
-      try {
-        const analysis = await analyzeImage(imageAtt.path);
-        userContent = `[user sent a photo: ${analysis}]${msg.text ? `\n\n${msg.text}` : ""}`;
 
-        // Also extract tasks from the photo content (rubric → tasks, screenshot → action items)
-        storeMessage({ chat_id: replyTo, sender: "photo", content: analysis, direction: "in", user_id: userId });
-        runExtractionOnce(userId).then(count => {
-          if (count) console.log(`[handler] photo → ${count} task(s) extracted`);
-        }).catch(() => {});
-      } catch (e) {
-        userContent = `[photo — couldn't read it]${msg.text ? `\n\n${msg.text}` : ""}`;
+    // Detect image: check attachments OR the replacement character (image without caption)
+    const imageAtt = msg.attachments.find(a =>
+      /\.(jpe?g|png|gif|webp|heic|tiff?)$/i.test(a.path) ||
+      (a.mimeType && a.mimeType.startsWith("image/"))
+    );
+    const hasImageMarker = (msg.text || "").includes("\ufffc") || (msg.text || "").includes("￼");
+
+    if (imageAtt || (hasImageMarker && msg.attachments.length > 0)) {
+      const att = imageAtt || msg.attachments[0];
+      console.log(`[handler] image detected: path="${att.path}" mime="${att.mimeType}" attachments=${msg.attachments.length}`);
+
+      // Send immediate "looking at it" feedback
+      await sendText(replyTo, "got the photo, give me a sec to read it...");
+
+      if (att.path) {
+        try {
+          const analysis = await analyzeImage(att.path);
+          console.log(`[handler] vision result: ${analysis.slice(0, 200)}`);
+
+          // Store and extract tasks from photo
+          storeMessage({ chat_id: replyTo, sender: "photo", content: analysis, direction: "in", user_id: userId });
+          const taskCount = await runExtractionOnce(userId);
+          console.log(`[handler] photo → ${taskCount} task(s) extracted`);
+
+          // Give LLM the analysis + user profile for mismatch detection
+          const profileHint = user?.profile ? `\n\n[context: this user is ${user.name}, ${user.profile}. if this doesn't match their field/major, be playful about it — "i'll add it but i don't think this is yours!" then confirm you added the tasks]` : "";
+          userContent = `[user sent a photo and i extracted this: ${analysis}]\n\n[i found ${taskCount} task(s) and added them to your priority list]${profileHint}`;
+        } catch (e) {
+          console.error(`[handler] vision failed:`, e);
+          userContent = "[photo came through but i couldn't read it clearly — tell them what's on it]";
+        }
+      } else {
+        console.warn(`[handler] attachment found but no path — raw:`, JSON.stringify(msg.attachments));
+        userContent = "[user sent a photo but the file path was empty — ask them to resend it]";
       }
+    } else if (hasImageMarker && msg.attachments.length === 0) {
+      console.warn(`[handler] replacement char detected but no attachments found`);
+      userContent = "[user tried to send a photo but it didn't come through — ask them to resend]";
     }
 
     const executor = createToolExecutor(phone);

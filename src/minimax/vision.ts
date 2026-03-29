@@ -7,14 +7,20 @@ const MIME: Record<string, string> = {
   ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
 };
 
-const VISION_PROMPT = `extract everything actionable from this image. it could be:
-- assignment rubric (extract: items, percentages, deadlines, requirements)
-- screenshot of a conversation (extract: who said what, any asks or deadlines)
-- schedule or syllabus (extract: dates, events, deadlines)
-- notes or whiteboard (extract: key points, action items)
-- receipt or document (extract: amounts, dates, relevant details)
+const VISION_PROMPT = `READ ALL TEXT IN THIS IMAGE FIRST. transcribe every word you can see, then extract actionable items.
 
-return the extracted info as plain text, structured clearly. include specific numbers, dates, names, and percentages. if you see deadlines, state them explicitly.`;
+step 1: read every visible word, number, date, and label in the image
+step 2: identify what type of content this is:
+- assignment/rubric/syllabus → extract: each assignment name, percentage/weight, due date, requirements
+- class schedule → extract: each class/event, day, time, location
+- conversation screenshot → extract: who said what, any asks or deadlines mentioned
+- whiteboard/notes → extract: key points, action items, any dates
+- document/receipt → extract: amounts, dates, relevant details
+
+step 3: return structured plain text with ALL specifics — every assignment name, every percentage, every date, every requirement. do not summarize or skip items. list them all.
+
+if there are assignments: format each as "- [name]: [weight/percentage] — due [date] — [requirements]"
+if no due dates visible, say "no due date listed"`;
 
 export async function analyzeImage(imagePath: string): Promise<string> {
   try {

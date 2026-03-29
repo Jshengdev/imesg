@@ -30,6 +30,48 @@ function normalizeMessage(msg: any): NormalizedMessage {
   };
 }
 
+// Watcher doesn't include attachments — re-fetch when we detect the replacement character
+async function enrichAttachments(msg: NormalizedMessage): Promise<NormalizedMessage> {
+  const hasReplacementChar = msg.text.includes('\ufffc') || msg.text.includes('￼');
+  if (hasReplacementChar) {
+    console.log(`[sdk] enrichment check: att=${msg.attachments.length} paths=[${msg.attachments.map(a => a.path).join(',')}] mimes=[${msg.attachments.map(a => a.mimeType).join(',')}]`);
+  }
+  if (msg.attachments.length > 0 && msg.attachments[0].path) return msg;
+  if (!hasReplacementChar) return msg;
+
+  // Wait a moment for the iMessage DB to fully write the attachment record
+  await new Promise(r => setTimeout(r, 1500));
+
+  try {
+    const result = await getSDK().getMessages({ limit: 10 });
+    const messages = (result as any).messages || result;
+    // Try matching by ID first, then by sender + recency
+    let match = messages.find((m: any) => String(m.id) === msg.id || String(m.guid) === msg.id);
+    if (!match) {
+      // Fallback: find most recent message from same sender with attachments
+      match = messages.find((m: any) =>
+        m.sender === msg.sender &&
+        m.attachments?.length > 0 &&
+        ((m.text || '').includes('\ufffc') || (m.text || '').includes('￼'))
+      );
+    }
+    if (match?.attachments?.length) {
+      const enriched = match.attachments.map((a: any) => ({
+        path: a.path || a.filePath || '',
+        mimeType: a.mimeType || a.mime_type,
+      })).filter((a: any) => a.path);
+      if (enriched.length) {
+        console.log(`[sdk] enriched ${msg.id} with ${enriched.length} attachment(s): ${enriched.map((a: any) => a.path).join(', ')}`);
+        return { ...msg, attachments: enriched };
+      }
+    }
+    console.warn(`[sdk] enrichment: found msg but no valid attachments`);
+  } catch (e) {
+    console.warn('[sdk] attachment enrichment failed:', e);
+  }
+  return msg;
+}
+
 let sdk: IMessageSDK | null = null;
 let messageCount = 0;
 
@@ -51,8 +93,13 @@ export async function sendText(to: string, text: string): Promise<void> {
   console.log(`[sdk] sendText → ${to}: ${text.slice(0, 80)}`);
   try {
     await getSDK().send(to, text);
-  } catch (e) {
-    console.error('[sdk] sendText failed:', e);
+  } catch (e: any) {
+    // Timeout errors are usually false alarms — AppleScript sent it but SDK confirmation timed out
+    if (e?.message?.includes('timeout')) {
+      console.warn(`[sdk] send timeout (message likely delivered): ${text.slice(0, 40)}`);
+    } else {
+      console.error('[sdk] sendText failed:', e);
+    }
   }
 }
 
@@ -71,9 +118,9 @@ export async function startListening(onMessage: (msg: NormalizedMessage) => Prom
     onMessage: async (raw: any) => {
       try {
         messageCount++;
-        console.log(`[sdk] raw #${messageCount}: sender=${raw?.sender} chatId=${raw?.chatId} fromMe=${raw?.isFromMe} text="${(raw?.text || '').slice(0, 50)}"`);
+        console.log(`[sdk] raw #${messageCount}: sender=${raw?.sender} chatId=${raw?.chatId} fromMe=${raw?.isFromMe} text="${(raw?.text || '').slice(0, 50)}" att=${raw?.attachments?.length || 0}`);
 
-        const msg = normalizeMessage(raw);
+        let msg = normalizeMessage(raw);
 
         if (!msg.id) {
           console.warn('[sdk] skipping — no id');
@@ -84,7 +131,10 @@ export async function startListening(onMessage: (msg: NormalizedMessage) => Prom
         if (processedIds.size >= MAX_PROCESSED) processedIds.clear();
         processedIds.add(msg.id);
 
-        console.log(`[sdk] → routing: from=${msg.sender} chat=${msg.chatId} fromMe=${msg.isFromMe} text="${msg.text.slice(0, 60)}"`);
+        // Enrich attachments if watcher didn't include them
+        msg = await enrichAttachments(msg);
+
+        console.log(`[sdk] → routing: from=${msg.sender} chat=${msg.chatId} fromMe=${msg.isFromMe} text="${msg.text.slice(0, 60)}" att=${msg.attachments.length}`);
 
         await onMessage(msg);
       } catch (err) {
