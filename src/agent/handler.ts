@@ -106,8 +106,9 @@ async function handleOnboarding(msg: NormalizedMessage): Promise<boolean> {
       await sleep(2500);
 
       // In demo mode, seed tasks + people immediately
-      if (isDemoMode() && userId) {
-        seedTasksForUser(userId);
+      const currentUserId = user?.id;
+      if (isDemoMode() && currentUserId) {
+        seedTasksForUser(currentUserId);
       }
 
       // Post-OAuth reveal — 3 beats: clock → got you → positioning
@@ -129,7 +130,7 @@ async function handleOnboarding(msg: NormalizedMessage): Promise<boolean> {
 
           // Extract tasks from emails
           if (gmail.status === "fulfilled" && gmail.value.emails.length) {
-            extractTasksFromEmails(gmail.value.emails, userId).catch(() => {});
+            extractTasksFromEmails(gmail.value.emails, currentUserId).catch(() => {});
           }
         }
 
@@ -491,6 +492,7 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
       userContent = "[user tried to send a photo but it didn't come through — ask them to resend]";
     }
 
+    console.log(`[handler] creating tool executor with phone=${phone}`);
     const executor = createToolExecutor(phone);
     const { text, toolsCalled } = await generateWithTools(system, userContent, TOOL_DEFS, executor);
     console.log(`[handler] tools: ${toolsCalled.length ? toolsCalled.join(", ") : "none"}`);

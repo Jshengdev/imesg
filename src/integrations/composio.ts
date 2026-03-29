@@ -98,7 +98,9 @@ export async function executeWithFallback(
   phone?: string,
 ): Promise<any[]> {
   if (isMockMode()) return [];
-  const entity = phone ? composio!.getEntity(phoneToEntityId(phone)) : getEntity();
+  const entityId = phone ? phoneToEntityId(phone) : "default";
+  console.log(`[composio] ${label}: using entity=${entityId} (phone=${phone || "none"})`);
+  const entity = phone ? composio!.getEntity(entityId) : getEntity();
   for (const s of strategies) {
     try {
       const result = await entity.execute(s);
