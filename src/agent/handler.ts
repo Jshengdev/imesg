@@ -4,7 +4,7 @@ import { sendText, sendBubbles, type NormalizedMessage } from "../imessage/sdk";
 import { logAgent, resetDatabase, registerUser, getUserByPhone, getActiveUsers, updateUser, getTaskQueue, getTasksWithDetails, completeTaskByDescription, storeMessage } from "../memory/db";
 import { checkUserConnected, getOAuthLinks } from "../integrations/composio";
 import { SYSTEM_PROMPT, POST_HISTORY_ENFORCEMENT, validateResponse, validateDraft, getTemporalVoice } from "./personality";
-import { TOOL_DEFS, createToolExecutor } from "./tools";
+import { TOOL_DEFS, createToolExecutor, setLastPriorityShown, getLastPriorityShown } from "./tools";
 import { splitIntoBubbles } from "../imessage/bubble-split";
 import { MessageBatcher } from "../imessage/batcher";
 import { analyzeCalendar } from "../integrations/calendar";
@@ -406,8 +406,37 @@ async function processMessage(msg: NormalizedMessage): Promise<void> {
     const response = validateResponse(raw);
     await sendBubbles(replyTo, splitIntoBubbles(response));
     logAgent({ direction: "out", content: response }, userId);
+    setLastPriorityShown(true);
     return;
   }
+
+  // "yeah block those" / "yes" after priority → auto-block top tasks
+  if (getLastPriorityShown() && /^(yes|yeah|yep|do it|block|y|ye|block those|block them|block it)[\s!.]*$/i.test(text)) {
+    setLastPriorityShown(false);
+    const tasks = getTasksWithDetails(userId);
+    const topTasks = tasks.filter((t: any) => t.urgency >= 3).slice(0, 4);
+    if (!topTasks.length) {
+      await sendText(replyTo, "nothing urgent enough to block rn");
+      return;
+    }
+
+    await sendText(replyTo, "on it, blocking those now...");
+    const results: string[] = [];
+    for (const t of topTasks) {
+      try {
+        const { findAndBlockTime: findBlock } = await import("../integrations/calendar");
+        const dur = t.estimated_minutes || 30;
+        const res = await findBlock(t.description.slice(0, 50), dur, new Date(), phone);
+        results.push(`✓ ${t.description.slice(0, 40)} — ${dur}min`);
+      } catch {
+        results.push(`✗ couldn't block: ${t.description.slice(0, 40)}`);
+      }
+    }
+    await sendText(replyTo, results.join("\n"));
+    logAgent({ direction: "out", content: results.join("\n") }, userId);
+    return;
+  }
+  setLastPriorityShown(false);
 
   // /poll — force check all channels
   if (/^\/?poll$/i.test(text)) {

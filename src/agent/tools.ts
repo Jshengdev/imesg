@@ -177,6 +177,30 @@ function fmtConversation(limit: number): string {
   }).join("\n");
 }
 
+// --- Email address lookup from recent pulls ---
+
+let lastEmailPull: { from: string; subject: string }[] = [];
+let lastPriorityShown = false;
+
+export function setLastPriorityShown(val: boolean): void { lastPriorityShown = val; }
+export function getLastPriorityShown(): boolean { return lastPriorityShown; }
+
+function findEmailAddress(nameHint: string): string | null {
+  const hint = nameHint.toLowerCase();
+  for (const e of lastEmailPull) {
+    const from = e.from.toLowerCase();
+    if (from.includes(hint)) {
+      // Extract email from "Name <email>" format
+      const match = e.from.match(/<([^>]+)>/);
+      if (match) return match[1];
+      // Or if it's just an email
+      const emailMatch = e.from.match(/[\w.-]+@[\w.-]+/);
+      if (emailMatch) return emailMatch[0];
+    }
+  }
+  return null;
+}
+
 // --- Tool executor ---
 
 export function createToolExecutor(phone?: string) {
@@ -185,8 +209,12 @@ export function createToolExecutor(phone?: string) {
       case "get_calendar":
         return fmtCalendar(await analyzeCalendar(phone));
 
-      case "get_emails":
-        return fmtEmails(await analyzeGmail(phone));
+      case "get_emails": {
+        const result = await analyzeGmail(phone);
+        // Cache emails for address lookup
+        lastEmailPull = result.emails.map(e => ({ from: e.from, subject: e.subject }));
+        return fmtEmails(result);
+      }
 
       case "get_tasks":
         return fmtTasks(getTaskQueue());
@@ -198,8 +226,17 @@ export function createToolExecutor(phone?: string) {
         return fmtConversation((args.limit as number) || 8);
 
       case "save_email_draft": {
+        let to = args.to as string;
+        // If LLM passed a name instead of email, try to resolve it
+        if (to && !to.includes("@")) {
+          const resolved = findEmailAddress(to);
+          if (resolved) {
+            console.log(`[tools] resolved "${to}" → ${resolved}`);
+            to = resolved;
+          }
+        }
         const result = await saveEmailDraft(
-          args.to as string,
+          to,
           args.subject as string,
           args.body as string,
           phone,
@@ -208,8 +245,16 @@ export function createToolExecutor(phone?: string) {
       }
 
       case "send_email": {
+        let to = args.to as string;
+        if (to && !to.includes("@")) {
+          const resolved = findEmailAddress(to);
+          if (resolved) {
+            console.log(`[tools] resolved "${to}" → ${resolved}`);
+            to = resolved;
+          }
+        }
         const result = await sendEmail(
-          args.to as string,
+          to,
           args.subject as string,
           args.body as string,
           phone,
